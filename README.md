@@ -176,17 +176,17 @@ a MQTT-broker and for subscribing to a topic on a MQTT-broker. The library suppo
 import nmqtt, asyncdispatch
 
 let ctx = newMqttCtx("nmqttClient")
-ctx.set_host("test.mosquitto.org", 1883)
-#ctx.set_auth("username", "password")
-#ctx.set_ping_interval(30)
-#ctx.set_ssl_certificates("cert.crt", "private.key")
+ctx.setHost("test.mosquitto.org", 1883)
+#ctx.setAuth("username", "password")
+#ctx.setPingInterval(30)
+#ctx.setSSLCertificates("cert.crt", "private.key")
 
 proc mqttSub() {.async.} =
   await ctx.start()
-  proc on_data(topic: string, message: string) =
+  proc onData(topic: string, message: string) =
     echo "got ", topic, ": ", message
 
-  await ctx.subscribe("nmqtt", 2, on_data)
+  await ctx.subscribe("nmqtt", 2, onData)
 
 asyncCheck mqttSub()
 runForever()
@@ -209,11 +209,11 @@ proc mqttSubPub() {.async.} =
   await ctx.start()
 
   # Callback when receiving on the topic
-  proc on_data(topic: string, message: string) =
+  proc onData(topic: string, message: string) =
     echo "got ", topic, ": ", message
 
   # Subscribe to topic the topic `nmqtt`
-  await ctx.subscribe("nmqtt", 2, on_data)
+  await ctx.subscribe("nmqtt", 2, onData)
   await sleepAsync 500
 
   # Publish a message to the topic `nmqtt`
@@ -236,63 +236,75 @@ waitFor mqttSubPub()
 proc newMqttCtx*(clientId: string): MqttCtx =
 ```
 
-Initiate a new MQTT client
+Initiate a new MQTT client.
 
 
 ____
 
-### set_ping_interval*
+### setPingInterval*
 
 ```nim
-proc set_ping_interval*(ctx: MqttCtx, txInterval: int) =
+proc setPingInterval*(ctx: MqttCtx, txInterval: int) =
 ```
 
 Set the clients ping interval in seconds. Default is 60 seconds.
 
 ____
 
-### set_ssl_certificates*
+### setSSLCertificates*
 
 ```nim
-proc set_ssl_certificates*(ctx: MqttCtx, sslCert: string, sslKey: string) =
+proc setSSLCertificates*(ctx: MqttCtx, sslCert: string, sslKey: string) =
 ```
 
-Sets the SSL Certificate and Key files to use Mutual TLS authentication
+Sets the SSL Certificate and Key files to use Mutual TLS authentication.
 
 ____
 
-### set_host*
+### setHost*
 
 ```nim
-proc set_host*(ctx: MqttCtx, host: string, port: int=1883, sslOn=false) =
+proc setHost*(ctx: MqttCtx, host: string, port: int=1883, sslOn=false) =
 ```
 
-Set the MQTT host
-
-
-____
-
-### set_auth*
-
-```nim
-proc set_auth*(ctx: MqttCtx, username: string, password: string) =
-```
-
-Set the authentication for the host
+Set the MQTT host.
 
 
 ____
 
-### set_will*
+### setAuth*
 
 ```nim
-proc set_will*(ctx: MqttCtx, topic, msg: string, qos=0, retain=false) =
+proc setAuth*(ctx: MqttCtx, username: string, password: string) =
+```
+
+Set the authentication for the host.
+
+
+____
+
+### setWill*
+
+```nim
+proc setWill*(ctx: MqttCtx, topic, msg: string, qos=0, retain=false) =
 ```
 
 Set the clients will.
 
 
 ____
+
+### setMaxInflightMessages*
+
+```nim
+proc setMaxInflightMessages*(ctx: MqttCtx, maxInflightMessages: int) =
+```
+
+Sets the maximum number of unacknowledged MQTT messages (QoS 1 and QoS 2). Default = 20.
+
+
+____
+
 
 ### connect*
 
@@ -367,7 +379,7 @@ ____
 proc subscribe*(ctx: MqttCtx, topic: string, qos: int, callback: PubCallback): Future[void] =
 ```
 
-Subscribe to a topic
+Subscribe to a topic.
 
 Access the callback with:
 ```nim

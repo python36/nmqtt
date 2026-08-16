@@ -19,20 +19,20 @@ proc nmqttPub(host="127.0.0.1", port=1883, ssl=false, clientid="", username="", 
     echo "Running nmqtt_pub v" & nmqttVersion
 
   let ctx = newMqttCtx(if clientid != "": clientid else: "nmqttpub-" & $getCurrentProcessId())
-  ctx.set_host(host, port, ssl)
+  ctx.setHost(host, port, ssl)
 
   if username != "" or password != "":
-    ctx.set_auth(username, password)
+    ctx.setAuth(username, password)
 
   # Set the will message
   if willretain and (willtopic == "" or willmsg == ""):
     echo "Error: Will-retain giving, but no topic given"
     quit()
   elif willtopic != "" and willmsg != "":
-    ctx.set_will(willtopic, willmsg, willqos, willretain)
+    ctx.setWill(willtopic, willmsg, willqos, willretain)
 
   # Set the verbosity
-  ctx.set_verbosity(verbosity)
+  ctx.setVerbosity(verbosity)
 
   # Control CTRL+c hook
   setControlCHook(handler)
