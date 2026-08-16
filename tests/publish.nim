@@ -1,48 +1,21 @@
 
 suite "test suite for publish":
 
-  test "publish multi line":
-    let (tpc, _) = tdata("publish multi line")
+  test "publish multi line; json; long (757 chars); special chars":
+    let
+      ctxMain = newCtx()
+      ctxListen = newCtx()
+      (tpc1, _) = tdata("publish multi line")
+      (tpc2, _) = tdata("publish json")
+      (tpc3, _) = tdata("publish long (757 chars)")
+      (tpc4, _) = tdata("publish special chars")
 
-    const text = """1) If wishes were horses, beggars would ride.
+    const text1 = """1) If wishes were horses, beggars would ride.
     2) It’s easy to be wise after the event.
         3) Watch the doughnut, and not the hole.
             4) On a wing and a prayer"""
 
-    proc conn() {.async.} =
-      await sleepAsync 1000
-
-      var
-        msgFound: bool
-        timeout: int
-        msg: string
-
-      proc on_data_pub1(topic: string, message: string) =
-        if topic == tpc:
-          msg = message
-
-      await ctxListen.subscribe(tpc, 0, on_data_pub1)
-
-      await sleepAsync 500
-      await ctxMain.publish(tpc, text, 0)
-
-      # Wait for final msg is found
-      while msg == "":
-        if timeout == 5:
-          break
-        await sleepAsync(1000)
-        timeout += 1
-
-      check(text == msg)
-      await ctxListen.unsubscribe(tpc)
-      await sleepAsync 500
-    waitFor conn()
-
-
-  test "publish json":
-    let (tpc, _) = tdata("publish json")
-
-    const text = """
+    const text2 = """
 {
   "Novo": {
       "priceLatest": 359.35,
@@ -75,103 +48,46 @@ suite "test suite for publish":
       "success": true
   }
 }"""
-    proc conn() {.async.} =
-      await sleepAsync 1000
 
-      var
-        msgFound: bool
-        timeout: int
-        msg: string
+    const text3 = "Nim code specifies a computation that acts on a memory consisting of components called locations. A variable is basically a name for a location. Each variable and location is of a certain type. The variable's type is called static type, the location's type is called dynamic type. If the static type is not the same as the dynamic type, it is a super-type or subtype of the dynamic type. An identifier is a symbol declared as a name for a variable, type, procedure, etc. The region of the program over which a declaration applies is called the scope of the declaration. Scopes can be nested. The meaning of an identifier is determined by the smallest enclosing scope in which the identifier is declared unless overloading resolution rules suggest otherwise."
 
-      proc on_data_pub2(topic: string, message: string) =
-        if topic == tpc:
-          msg = message
-
-      await ctxListen.subscribe(tpc, 0, on_data_pub2)
-
-      await sleepAsync 500
-      await ctxMain.publish(tpc, text, 0)
-
-      # Wait for final msg is found
-      while msg == "":
-        if timeout == 5:
-          break
-        await sleepAsync(1000)
-        timeout += 1
-
-      check(text == msg)
-      await ctxListen.unsubscribe(tpc)
-      await sleepAsync 500
-    waitFor conn()
-
-
-
-  test "publish long (757 chars)":
-    let (tpc, _) = tdata("publish long (757 chars)")
-
-    const text = "Nim code specifies a computation that acts on a memory consisting of components called locations. A variable is basically a name for a location. Each variable and location is of a certain type. The variable's type is called static type, the location's type is called dynamic type. If the static type is not the same as the dynamic type, it is a super-type or subtype of the dynamic type. An identifier is a symbol declared as a name for a variable, type, procedure, etc. The region of the program over which a declaration applies is called the scope of the declaration. Scopes can be nested. The meaning of an identifier is determined by the smallest enclosing scope in which the identifier is declared unless overloading resolution rules suggest otherwise."
+    const text4 = "*~\"%?+#!öôéè|§½';£@$ 诶艾弗艾儿豆贝尔维 НимИсТчеБест æøå αγλρξψ mənʊʃjõəd̪ʱɪkaːɾõ 😆😎😍😘"
 
     proc conn() {.async.} =
-      await sleepAsync 1000
-
       var
-        msgFound: bool
-        timeout: int
-        msg: string
+        msgFound1: bool
+        msgFound2: bool
+        msgFound3: bool
+        msgFound4: bool
 
-      proc on_data_pub3(topic: string, message: string) =
-        if topic == tpc:
-          msg = message
+      proc onDataPub1(topic: string, message: string) =
+        msgFound1 = topic == tpc1 and message == text1
 
-      await ctxListen.subscribe(tpc, 0, on_data_pub3)
+      proc onDataPub2(topic: string, message: string) =
+        msgFound2 = topic == tpc2 and message == text2
 
-      await sleepAsync 500
-      await ctxMain.publish(tpc, text, 0)
+      proc onDataPub3(topic: string, message: string) =
+        msgFound3 = topic == tpc3 and message == text3
 
-      # Wait for final msg is found
-      while msg == "":
-        if timeout == 5:
-          break
-        await sleepAsync(1000)
-        timeout += 1
+      proc onDataPub4(topic: string, message: string) =
+        msgFound4 = topic == tpc4 and message == text4
 
-      check(text == msg)
-      await ctxListen.unsubscribe(tpc)
-      await sleepAsync 500
-    waitFor conn()
+      await ctxListen.subscribe(tpc1, 0, onDataPub1)
+      await ctxListen.subscribe(tpc2, 0, onDataPub2)
+      await ctxListen.subscribe(tpc3, 0, onDataPub3)
+      await ctxListen.subscribe(tpc4, 0, onDataPub4)
 
+      await sleepAsync(500)
+      await ctxMain.publish(tpc1, text1, 0)
+      await ctxMain.publish(tpc2, text2, 0)
+      await ctxMain.publish(tpc3, text3, 0)
+      await ctxMain.publish(tpc4, text4, 0)
 
-  test "publish special chars":
-    let (tpc, _) = tdata("publish special chars")
+      await sleepAsync(500)
 
-    const text = "*~\"%?+#!öôéè|§½';£@$ 诶艾弗艾儿豆贝尔维 НимИсТчеБест æøå αγλρξψ mənʊʃjõəd̪ʱɪkaːɾõ 😆😎😍😘"
+      check(msgFound1 == true)
+      check(msgFound2 == true)
+      check(msgFound3 == true)
+      check(msgFound4 == true)
 
-    proc conn() {.async.} =
-      await sleepAsync 1000
-
-      var
-        msgFound: bool
-        timeout: int
-        msg: string
-
-      proc on_data_pub3(topic: string, message: string) =
-        if topic == tpc:
-          msg = message
-          echo msg
-
-      await ctxListen.subscribe(tpc, 0, on_data_pub3)
-
-      await sleepAsync 500
-      await ctxMain.publish(tpc, text, 0)
-
-      # Wait for final msg is found
-      while msg == "":
-        if timeout == 5:
-          break
-        await sleepAsync(1000)
-        timeout += 1
-
-      check(text == msg)
-      await ctxListen.unsubscribe(tpc)
-      await sleepAsync 500
     waitFor conn()

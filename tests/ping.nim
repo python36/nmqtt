@@ -2,12 +2,14 @@
 suite "test suite for ping":
 
   test "set ping interval":
-    let (tpc, msg) = tdata("set ping interval")
+    let
+      ctxMain = newCtx()
+      (tpc, msg) = tdata("set ping interval")
 
     proc conn() {.async.} =
 
-      ctxSlave.set_ping_interval(1)
-      await ctxSlave.connect()
+      ctxMain.setPingInterval(1)
+      await ctxMain.connect()
       await sleepAsync(6000)
 
       var
@@ -21,12 +23,12 @@ suite "test suite for ping":
       check(pingCount > 3)
       check(pingResp > 3)
 
-      await ctxSlave.disconnect()
-      await sleepAsync(1500)
+      await ctxMain.disconnect()
+      await sleepAsync(500)
 
       testDmp = @[]
-      ctxSlave.set_ping_interval(60)
-      await ctxSlave.connect()
+      ctxMain.setPingInterval(60)
+      await ctxMain.connect()
       await sleepAsync(6000)
 
       pingCount = 0
@@ -38,8 +40,5 @@ suite "test suite for ping":
       checkpoint("Ping with 60 second interval during 6 seconds")
       check(pingCount == 0)
       check(pingResp == 0)
-
-      await ctxSlave.disconnect()
-      await sleepAsync(500)
 
     waitFor conn()

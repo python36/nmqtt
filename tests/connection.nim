@@ -5,8 +5,8 @@ suite "test suite for connections":
     let (tpc, msg) = tdata("connection public broker")
 
     proc conn() {.async.} =
-      let ctx = newMqttCtx("nmqttTestConn")
-      ctx.set_host("test.mosquitto.org", 1883)
+      let ctx = newMqttCtx("nmqttTestConn" & tpc) # unique clientid for public broker
+      ctx.setHost("broker-cn.emqx.io", 1883)
       await ctx.connect()
       await sleepAsync(1500)
       check(ctx.state == Connected)
@@ -14,15 +14,15 @@ suite "test suite for connections":
       await sleepAsync(1500)
       await ctx.disconnect()
       check(ctx.state == Disabled)
-    waitFor conn()
 
+    waitFor conn()
 
   test "connection public broker SSL":
     let (tpc, msg) = tdata("connection public broker SSL")
 
     proc conn() {.async.} =
-      let ctx = newMqttCtx("nmqttTestConn")
-      ctx.set_host("test.mosquitto.org", 8883, true)
+      let ctx = newMqttCtx("nmqttTestConn" & tpc) # unique clientid for public broker
+      ctx.setHost("broker-cn.emqx.io", 8883, true)
       await ctx.connect()
       await sleepAsync(1500)
       check(ctx.state == Connected)
@@ -30,79 +30,65 @@ suite "test suite for connections":
       await sleepAsync(1500)
       await ctx.disconnect()
       check(ctx.state == Disabled)
+
     waitFor conn()
 
-
-  #[test "connection wrong port - timeout":
-    proc conn() {.async.} =
-      let ctx = newMqttCtx("nmqttTestConn")
-      ctx.set_host("test.mosquitto.org", 2222)
-      await ctx.start()
-      check(ctx.state == Error)
-    waitFor conn()]#
-
-
   test "connect() to broker":
-    ## FAILS. Due to `runConnect` it will reconnect forever
+    let ctxMain = newCtx()
 
     proc conn() {.async.} =
-      await ctxSlave.connect()
+      await ctxMain.connect()
       await sleepAsync(500)
-      check(ctxSlave.state == Connected)
+      check(ctxMain.state == Connected)
 
       # Do important stuff
       await sleepAsync(500)
 
       # Disconnect
-      await ctxSlave.disconnect()
-      check(ctxSlave.state == Disabled)
+      await ctxMain.disconnect()
+      check(ctxMain.state == Disabled)
 
     waitFor conn()
 
-
   test "start() and reconnect":
-    ## FAILS. Due to `runConnect` it will reconnect forever
+    let ctxMain = newCtx()
 
     proc conn() {.async.} =
       await sleepAsync(500)
-      await ctxSlave.start()
-      await sleepAsync(500)
-      check(ctxSlave.state == Connected)
+      check(ctxMain.state == Connected)
 
       # Do important stuff
       await sleepAsync(500)
 
       # Close connection
-      ctxSlave.state = Disconnecting
-      ctxSlave.s.close()
-      echo(ctxSlave.state) # = Disconnected
+      ctxMain.state = Disconnecting
+      ctxMain.s.close()
       await sleepAsync(500)
 
       # Auto-reconnect goes on `Disconnected"
-      ctxSlave.state = Disconnected
+      ctxMain.state = Disconnected
       # Auto-reconnect loop is 1000ms, wait 2000ms to ensure loop
       await sleepAsync(2000)
 
       # Check reconnect
-      check(ctxSlave.state == Connected)
+      check(ctxMain.state == Connected)
 
       # Disconnect
-      await ctxSlave.disconnect()
-      check(ctxSlave.state == Disabled)
+      await ctxMain.disconnect()
+      check(ctxMain.state == Disabled)
 
     waitFor conn()
 
-
   test "isConnected()":
-    ## FAILS. Due to `runConnect` it will reconnect forever
+    let ctxMain = newCtx()
 
     proc conn() {.async.} =
-      check(ctxSlave.isConnected() == false)
-      await ctxSlave.connect()
+      check(ctxMain.isConnected() == false)
+      await ctxMain.connect()
       await sleepAsync(500)
-      check(ctxSlave.isConnected() == true)
+      check(ctxMain.isConnected() == true)
 
-      await ctxSlave.disconnect()
-      check(ctxSlave.state == Disabled)
+      await ctxMain.disconnect()
+      check(ctxMain.state == Disabled)
 
     waitFor conn()

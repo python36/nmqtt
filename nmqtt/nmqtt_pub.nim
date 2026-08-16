@@ -47,7 +47,7 @@ proc nmqttPub(host="127.0.0.1", port=1883, ssl=false, clientid="", username="", 
   else:
     for i in 0..repeat-1:
       waitFor ctx.publish(topic, msg, qos, retain)
-      if repeatdelay > 0: waitFor sleepAsync (repeatdelay * 1000)
+      if repeatdelay > 0: waitFor sleepAsync(repeatdelay * 1000)
 
   # Check that the message has been succesfully send
   while ctx.workQueue.len() > 0:
