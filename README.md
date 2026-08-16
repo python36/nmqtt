@@ -197,7 +197,7 @@ runForever()
 proc mqttPub() {.async.} =
   await ctx.start()
   await ctx.publish("nmqtt", "hallo", 2)
-  await sleepAsync 500
+  await sleepAsync(500)
   await ctx.disconnect()
 
 waitFor mqttPub()
@@ -214,11 +214,11 @@ proc mqttSubPub() {.async.} =
 
   # Subscribe to topic the topic `nmqtt`
   await ctx.subscribe("nmqtt", 2, onData)
-  await sleepAsync 500
+  await sleepAsync(500)
 
   # Publish a message to the topic `nmqtt`
   await ctx.publish("nmqtt", "hallo", 2)
-  await sleepAsync 500
+  await sleepAsync(500)
 
   # Disconnect
   await ctx.disconnect()

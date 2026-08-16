@@ -1077,7 +1077,7 @@ proc runRx(ctx: MqttCtx) {.async.} =
 
 proc runPing(ctx: MqttCtx) {.async.} =
   while true:
-    await sleepAsync ctx.keepAlive.int * 1000
+    await sleepAsync(ctx.keepAlive.int * 1000)
     let ok = await ctx.sendPingReq()
     if not ok:
       break
@@ -1135,7 +1135,7 @@ proc runConnect(ctx: MqttCtx) {.async.} =
         for topic, cb in ctx.pubCallbacks:
           let msgId = ctx.nextMsgId()
           ctx.workQueue[msgId] = Work(wk: SubWork, msgId: msgId, topic: topic, qos: cb.qos, typ: Subscribe)
-    await sleepAsync 1000
+    await sleepAsync(1000)
 
 #
 # Public API

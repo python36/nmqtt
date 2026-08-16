@@ -2,7 +2,9 @@
 suite "test suite for messages":
 
   test "msgQueue() wait for all messages in workqueue":
-    let (tpc, msg) = tdata("msgQueue() wait for all messages in workqueue")
+    let
+      ctxMain = newCtx()
+      (tpc, msg) = tdata("msgQueue() wait for all messages in workqueue")
 
     proc conn() {.async.} =
 
@@ -16,7 +18,4 @@ suite "test suite for messages":
       await sleepAsync(1000)
       check(ctxMain.msgQueue == 0)
 
-      await ctxListen.unsubscribe(tpc)
-
     waitFor conn()
-
