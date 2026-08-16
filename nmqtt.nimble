@@ -1,5 +1,5 @@
 # Package
-version       = "1.0.8"
+version       = "1.0.9"
 author        = "zevv & ThomasTJdev & python36"
 description   = "Native MQTT library and binaries for publishing, subscribing and broker"
 license       = "MIT"
@@ -20,7 +20,7 @@ from strutils import format
 
 
 task test, "Runs the test suite.":
-  exec "nimble c -y -r tests/tester"
+  exec "nim c -r tests/tester"
 
 
 task setup, "Generate default nmqtt configuration file":

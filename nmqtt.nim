@@ -1,6 +1,6 @@
 ## Native Nim MQTT client library and binaries
 ##
-## zevv (https://github.com/zevv) & ThomasTJdev (https://github.com/ThomasTJdev)
+## zevv (https://github.com/zevv) & ThomasTJdev (https://github.com/ThomasTJdev) & python36 (https://github.com/python36)
 
 import
   strutils,
@@ -41,6 +41,7 @@ type
     inWork: bool
     hasNewWorks: bool
     keepAlive: uint16
+    maxInflightMessages: int
     willFlag: bool
     willQoS: uint8
     willRetain: bool
@@ -337,9 +338,16 @@ proc nextMsgId(ctx: MqttCtx): MsgId =
   inc ctx.msgIdSeq
   return ctx.msgIdSeq
 
+proc hasInflightSlots(ctx: MqttCtx): bool =
+  var cnt = 0
+  for w in ctx.workQueue.values():
+    if w.qos in {1, 2} and (w.typ != Publish or w.state == WorkSent):
+      inc cnt
+      if cnt == ctx.maxInflightMessages:
+        return false
+  true
 
 proc sendDisconnect(ctx: MqttCtx): Future[bool] {.async.}
-
 
 proc close(ctx: MqttCtx, reason: string) {.async.} =
   if ctx.state in {Connecting, Connected}:
@@ -349,7 +357,6 @@ proc close(ctx: MqttCtx, reason: string) {.async.} =
     discard await ctx.sendDisconnect()
     ctx.s.close()
     ctx.state = Disconnected
-
 
 proc send(ctx: MqttCtx, pkt: Pkt): Future[bool] {.async.} =
   ## Send the packet
@@ -377,7 +384,6 @@ proc send(ctx: MqttCtx, pkt: Pkt): Future[bool] {.async.} =
   await ctx.s.send(buf[0].unsafeAddr, buf.len)
 
   return true
-
 
 proc recv(ctx: MqttCtx): Future[Pkt] {.async.} =
   ## Receive and parse the packet
@@ -442,7 +448,6 @@ proc recv(ctx: MqttCtx): Future[Pkt] {.async.} =
   ctx.dmp "rx> " & $pkt
   return pkt
 
-
 proc sendConnect(ctx: MqttCtx): Future[bool] =
   var flags: uint8
   flags = flags or CleanSession.uint8
@@ -478,7 +483,6 @@ proc sendConnect(ctx: MqttCtx): Future[bool] =
     pkt.put ctx.password, true
   ctx.state = Connecting
   result = ctx.send(pkt)
-
 
 proc sendDisconnect(ctx: MqttCtx): Future[bool] =
   let pkt = newPkt(Disconnect, 0)
@@ -616,17 +620,26 @@ proc work(ctx: MqttCtx) {.async.} =
           continue
 
       if work.wk == PubWork and work.state == WorkNew:
-        if work.typ == Publish and work.qos == 0:
-          if await ctx.sendWork(work): ctx.workQueue.del msgId
+        if work.typ == Publish:
+          if work.qos == 0:
+            if await ctx.sendWork(work):
+              ctx.workQueue.del msgId
+
+          elif hasInflightSlots(ctx):
+            if await ctx.sendWork(work):
+              work.state = WorkSent
 
         elif work.typ == PubAck and work.qos == 1:
-          if await ctx.sendWork(work): ctx.workQueue.del msgId
+          if await ctx.sendWork(work):
+            ctx.workQueue.del msgId
 
         elif work.typ == PubComp and work.qos == 2:
-          if await ctx.sendWork(work): ctx.workQueue.del msgId
+          if await ctx.sendWork(work):
+            ctx.workQueue.del msgId
 
         else:
-          if await ctx.sendWork(work): work.state = WorkSent
+          if await ctx.sendWork(work):
+            work.state = WorkSent
 
       #when not defined(broker):
       elif work.wk == SubWork and work.state == WorkNew:
@@ -884,6 +897,7 @@ proc onPubAck(ctx: MqttCtx, pkt: Pkt) {.async.} =
   assert ctx.workQueue[msgId].state == WorkSent
   assert ctx.workQueue[msgId].qos == 1
   ctx.workQueue.del msgId
+  await ctx.work()
 
 proc onPubRec(ctx: MqttCtx, pkt: Pkt) {.async.} =
   let (msgId, _) = pkt.getu16(0)
@@ -910,6 +924,7 @@ proc onPubComp(ctx: MqttCtx, pkt: Pkt) {.async.} =
   assert ctx.workQueue[msgId].state == WorkSent
   assert ctx.workQueue[msgId].qos == 2
   ctx.workQueue.del msgId
+  await ctx.work()
 
 #when defined(broker):
 proc onSubscribe(ctx: MqttCtx, pkt: Pkt) {.async.} =
@@ -1069,7 +1084,7 @@ proc runPing(ctx: MqttCtx) {.async.} =
     await ctx.work()
 
 proc connectBroker(ctx: MqttCtx) {.async.} =
-  ## Connect to the broker
+  ## Connect to the broker.
   if ctx.keepAlive == 0:
     ctx.keepAlive = 60
 
@@ -1094,7 +1109,7 @@ proc connectBroker(ctx: MqttCtx) {.async.} =
 
 
 proc runConnect(ctx: MqttCtx) {.async.} =
-  ## Auto-connect and reconnect to broker
+  ## Auto-connect and reconnect to broker.
 
   while true:
     if ctx.state == Disabled:
@@ -1127,32 +1142,32 @@ proc runConnect(ctx: MqttCtx) {.async.} =
 #
 
 proc newMqttCtx*(clientId: string): MqttCtx =
-  ## Initiate a new MQTT client
-  MqttCtx(clientId: clientId, state: Disconnected)
+  ## Initiate a new MQTT client.
+  MqttCtx(clientId: clientId, state: Disconnected, maxInflightMessages: 20)
 
-proc set_ping_interval*(ctx: MqttCtx, txInterval: int = 60) =
+proc setPingInterval*(ctx: MqttCtx, txInterval: int = 60) =
   ## Set the clients ping interval in seconds. Default is 60 seconds.
   if txInterval > 0 and txInterval < 65535:
     ctx.keepAlive = txInterval.uint16
 
-proc set_host*(ctx: MqttCtx, host: string, port: int=1883, sslOn=false) =
-  ## Set the MQTT host
+proc setHost*(ctx: MqttCtx, host: string, port: int=1883, sslOn=false) =
+  ## Set the MQTT host.
   ctx.host = host
   ctx.port = Port(port)
   ctx.sslOn = sslOn
 
-proc set_ssl_certificates*(ctx: MqttCtx, sslCert: string, sslKey: string) =
+proc setSSLCertificates*(ctx: MqttCtx, sslCert: string, sslKey: string) =
   # Sets the SSL Certificate and Key to use when connecting to the remote broker
   # for mutal TLS authentication
   ctx.sslCert = sslCert
   ctx.sslKey = sslKey
 
-proc set_auth*(ctx: MqttCtx, username: string, password: string) =
+proc setAuth*(ctx: MqttCtx, username: string, password: string) =
   ## Set the authentication for the host.
   ctx.username = username
   ctx.password = password
 
-proc set_will*(ctx: MqttCtx, topic, msg: string, qos=0, retain=false) =
+proc setWill*(ctx: MqttCtx, topic, msg: string, qos=0, retain=false) =
   ## Set the clients will.
   ctx.willFlag   = true
   ctx.willTopic  = topic
@@ -1160,7 +1175,11 @@ proc set_will*(ctx: MqttCtx, topic, msg: string, qos=0, retain=false) =
   ctx.willQoS    = qos.uint8
   ctx.willRetain = retain
 
-proc set_verbosity*(ctx: MqttCtx, verbosity: int) =
+proc setMaxInflightMessages*(ctx: MqttCtx, maxInflightMessages: int) =
+  ## Sets the maximum number of unacknowledged MQTT messages (QoS 1 and QoS 2). Default = 20.
+  ctx.maxInflightMessages = maxInflightMessages
+
+proc setVerbosity*(ctx: MqttCtx, verbosity: int) =
   ## Set the verbosity.
   ctx.verbosity = verbosity
 

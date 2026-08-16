@@ -25,23 +25,23 @@ proc nmqttSub(host="127.0.0.1", port=1883, ssl=false, clientid="", username="", 
   if clientid != "":
     ctx.clientid = clientid
 
-  ctx.set_host(host, port, ssl)
+  ctx.setHost(host, port, ssl)
 
   if username != "" or password != "":
-    ctx.set_auth(username, password)
+    ctx.setAuth(username, password)
 
   # Set the ping interval/keep alive
-  ctx.set_ping_interval(keepalive)
+  ctx.setPingInterval(keepalive)
 
   # Set the will message
   if willretain and (willtopic == "" or willmsg == ""):
     echo "Error: Will-retain giving, but no topic given"
     quit(0)
   elif willtopic != "" and willmsg != "":
-    ctx.set_will(willtopic, willmsg, willqos, willretain)
+    ctx.setWill(willtopic, willmsg, willqos, willretain)
 
   # Set the verbosity
-  ctx.set_verbosity(verbosity)
+  ctx.setVerbosity(verbosity)
 
   # Connec to broker
   await ctx.start()
@@ -53,11 +53,11 @@ proc nmqttSub(host="127.0.0.1", port=1883, ssl=false, clientid="", username="", 
       waitFor ctx.publish(t, "", 0, true)
 
     # Callback for subscribe
-    proc on_data(t, msg: string) =
+    proc onData(t, msg: string) =
       echo t, ": ", msg
 
     # Subscribe to topic
-    await ctx.subscribe(t, qos, on_data)
+    await ctx.subscribe(t, qos, onData)
     if ctx.verbosity >= 1:
       ctx.dbg "Subscribing to: " & t
 
