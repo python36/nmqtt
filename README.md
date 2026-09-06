@@ -264,7 +264,7 @@ ____
 ### setHost*
 
 ```nim
-proc setHost*(ctx: MqttCtx, host: string, port: int=1883, sslOn=false) =
+proc setHost*(ctx: MqttCtx, host: string, port: int = 1883, sslOn = false) =
 ```
 
 Set the MQTT host.
@@ -286,7 +286,7 @@ ____
 ### setWill*
 
 ```nim
-proc setWill*(ctx: MqttCtx, topic, msg: string, qos=0, retain=false) =
+proc setWill*(ctx: MqttCtx, topic, msg: string, qos = 0, retain = false) =
 ```
 
 Set the clients will.
@@ -345,7 +345,7 @@ ____
 ### publish*
 
 ```nim
-proc publish*(ctx: MqttCtx, topic: string, message: string, qos=0, retain=false) {.async.} =
+proc publish*(ctx: MqttCtx, topic: string, message: string, qos = 0, retain = false) {.async.} =
 ```
 
 Publish a message.
@@ -376,7 +376,7 @@ ____
 ### subscribe*
 
 ```nim
-proc subscribe*(ctx: MqttCtx, topic: string, qos: int, callback: PubCallback): Future[void] =
+proc subscribe*(ctx: MqttCtx, topic: string, qos: QoS, callback: PubCallback): Future[void] =
 ```
 
 Subscribe to a topic.

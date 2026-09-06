@@ -21,6 +21,14 @@ when defined(broker):
   from os import fileExists
 
 type
+  QoS* = range[0..2]
+
+  PubCallback = object
+    cb: proc(topic: string, message: string)
+    qos: QoS
+
+  TopicCb = tuple[templ: seq[string], cb: PubCallback]
+
   MqttCtx* = ref object
     host: string
     port: Port
@@ -37,13 +45,13 @@ type
     ssl: SslContext
     msgIdSeq: MsgId
     workQueue: OrderedTable[MsgId, Work]
-    pubCallbacks: Table[string, PubCallback]
+    pubCallbacks: Table[string, TopicCb]
     inWork: bool
     hasNewWorks: bool
     keepAlive: uint16
     maxInflightMessages: int
     willFlag: bool
-    willQoS: uint8
+    willQoS: QoS
     willRetain: bool
     willTopic: string
     willMsg: string
@@ -52,8 +60,7 @@ type
     proto: string
     version: uint8
     connFlags: string
-    retained: seq[string]
-    subscribed: Table[string, uint8] # Topic, Qos
+    subscribed: Table[string, QoS] # Topic, QoS
     lastAction: float # Check keepAlive
 
   #when defined(broker):
@@ -69,8 +76,6 @@ type
     Disabled, Disconnected, Connecting, Connected, Disconnecting, Error
 
   MsgId = uint16
-
-  Qos = range[0..2]
 
   PktType = enum
     Notype      =  0
@@ -110,15 +115,11 @@ type
   WorkState = enum
     WorkNew, WorkSent, WorkAcked
 
-  PubCallback = object
-    cb: proc(topic: string, message: string)
-    qos: int
-
   Work = ref object
     state: WorkState
     msgId: MsgId
     topic: string
-    qos: Qos
+    qos: QoS
     typ: PktType
     flags: uint16 #when defined(broker)
     case wk: WorkKind
@@ -128,11 +129,9 @@ type
     of SubWork:
       discard
 
-
 when defined(broker):
   type
-    MqttSub* = ref object ## Managing the subscribers
-      subscribers: Table[string, seq[MqttCtx]]
+    TopicCtx = tuple[templ: seq[string], ctxs: seq[MqttCtx]]
 
     MqttBroker* = ref object
       host: string
@@ -143,7 +142,7 @@ when defined(broker):
       verbosity: int
       connections: Table[string, MqttCtx]
       retained: Table[string, RetainedMsg] # Topic, RetaindMsg
-      subscribers: Table[string, seq[MqttCtx]]
+      subscribers: Table[string, TopicCtx]
       version: uint8
       clientIdMaxLen: int
       clientKickOld: bool
@@ -155,7 +154,7 @@ when defined(broker):
 
     RetainedMsg = object
       msg: string
-      qos: uint8
+      qos: QoS
       time: float
       clientid: string
 
@@ -163,7 +162,6 @@ when defined(broker):
   var
     mqttbroker = MqttBroker()
     r = initRand(toInt(epochTime()))
-
 
 #
 # Packet helpers
@@ -185,6 +183,10 @@ proc put(pkt: var Pkt, data: string, withLen: bool) =
 proc getu8(pkt: Pkt, offset: int): (uint8, int) =
   let val = pkt.data[offset]
   result = (val, offset+1)
+
+proc getQoS(pkt: Pkt, offset: int): (QoS, int) =
+  let val = pkt.data[offset]
+  result = (QoS(val), offset+1)
 
 proc getu16(pkt: Pkt, offset: int): (uint16, int) =
   let val = (pkt.data[offset].int*256 + pkt.data[offset+1].int).uint16
@@ -219,7 +221,7 @@ proc `$`(pkt: Pkt): string =
     result.add b.toHex
     result.add " "
 
-proc newPkt(typ: PktType=NOTYPE, flags: uint8=0): Pkt =
+proc newPkt(typ: PktType = NOTYPE, flags: uint8 = 0): Pkt =
   result.typ = typ
   result.flags = flags
 
@@ -252,7 +254,7 @@ when defined(broker):
       when c is RetainedMsg:
         output.add("{" & t & "}")
       else:
-        output.add("{" & t & ": " & $c.len & "}")
+        output.add("{" & t & ": " & $c.ctxs.len & "}")
     stderr.write "\e[37m" & e & " >> " & output & "\e[0m\n"
 
   proc verbose(ctx: auto) =
@@ -283,14 +285,52 @@ proc wrn(s: string) =
 # Subscribers
 #
 
+proc matchTopic(templ: seq[string], topic: string): bool {.inline.} =
+  var i = 0
+  for t in templ:
+    if t == "#":
+      return i == 0 or i >= topic.len or topic[i] == '/'
+
+    elif i > topic.len:
+      return false
+
+    else:
+      if i > 0:
+        while i < topic.len:
+          if topic[i] == '/':
+            break
+          inc i
+
+      if i + t.len > topic.len or t != topic[i ..< i + t.len]:
+        return false
+      i += t.len
+
+    if i == topic.len:
+      return true
+
+proc splitTopic(topic: string): seq[string] =
+  if topic == "#":
+    @["#"]
+  elif topic[^1] == '#':
+    topic[0..^3].split('+') & @["#"]
+  else:
+    topic.split('+')
+
+when defined(broker):
+  proc retainMsg(topic: string, message: string, qos: QoS, clientid: string) =
+    mqttbroker.retained[topic] = RetainedMsg(msg: message, qos: qos, time: epochTime(), clientid: clientid)
+
 when defined(broker):
   proc addSubscriber*(ctx: MqttCtx, topic: string) {.async.} =
     ## Adds a subscriber to MqttBroker
     try:
       if mqttbroker.subscribers.hasKey(topic):
-        mqttbroker.subscribers[topic].insert(ctx)
+        for c in mqttbroker.subscribers[topic].ctxs:
+          if c.clientId == ctx.clientId:
+            return
+        mqttbroker.subscribers[topic].ctxs.insert(ctx)
       else:
-        mqttbroker.subscribers[topic] = @[ctx]
+        mqttbroker.subscribers[topic] = (templ: splitTopic(topic), ctxs: @[ctx])
     except:
       wrn("Crash when adding a new subcriber")
 
@@ -299,7 +339,7 @@ when defined(broker):
     ## Removes a subscriber from specific topic
     try:
       if mqttbroker.subscribers.hasKey(topic):
-        mqttbroker.subscribers[topic] = filter(mqttbroker.subscribers[topic], proc(x: MqttCtx): bool = x != ctx)
+        mqttbroker.subscribers[topic].ctxs = filter(mqttbroker.subscribers[topic].ctxs, proc(x: MqttCtx): bool = x != ctx)
     except:
       wrn("Crash when removing subscriber with specific topic")
 
@@ -307,18 +347,18 @@ when defined(broker):
   proc removeSubscriber*(ctx: MqttCtx) {.async.} =
     ## Removes a subscriber without knowing the topics
     var delTop: seq[string]
-    for t, c in mqttbroker.subscribers:
-      if ctx in c:
-        mqttbroker.subscribers[t] = filter(c, proc(x: MqttCtx): bool = x != ctx)
+    for t, c in mqttbroker.subscribers.mpairs():
+      if ctx in c.ctxs:
+        c.ctxs = filter(c.ctxs, proc(x: MqttCtx): bool = x != ctx)
 
-        if mqttbroker.subscribers[t].len() == 0:
+        if c.ctxs.len() == 0:
           delTop.add(t)
 
     for t in delTop:
       mqttbroker.subscribers.del(t)
 
 when defined(broker):
-  proc qosAlign(qP, qS: uint8): uint8 =
+  proc qosAlign(qP, qS: QoS): QoS =
     ## Aligns the QOS for publisher and subscriber.
     if qP == qS:
       result = qP
@@ -488,7 +528,7 @@ proc sendDisconnect(ctx: MqttCtx): Future[bool] =
   let pkt = newPkt(Disconnect, 0)
   result = ctx.send(pkt)
 
-proc sendSubscribe(ctx: MqttCtx, msgId: MsgId, topic: string, qos: Qos): Future[bool] =
+proc sendSubscribe(ctx: MqttCtx, msgId: MsgId, topic: string, qos: QoS): Future[bool] =
   var pkt = newPkt(Subscribe, 0b0010)
   pkt.put msgId.uint16
   pkt.put topic, true
@@ -501,8 +541,8 @@ proc sendUnsubscribe(ctx: MqttCtx, msgId: MsgId, topic: string): Future[bool] =
   pkt.put topic, true
   result = ctx.send(pkt)
 
-proc sendPublish(ctx: MqttCtx, msgId: MsgId, topic: string, message: string, qos: Qos, retain: bool): Future[bool] =
-  var flags = (qos shl 1).uint8
+proc sendPublish(ctx: MqttCtx, msgId: MsgId, topic: string, message: string, qos: QoS, retain: bool): Future[bool] =
+  var flags = (qos.uint8 shl 1).uint8
   if retain:
     flags = flags or 1
   var pkt = newPkt(Publish, flags)
@@ -512,13 +552,19 @@ proc sendPublish(ctx: MqttCtx, msgId: MsgId, topic: string, message: string, qos
   pkt.put message, false
   result = ctx.send(pkt)
 
-proc sendPubAck(ctx: MqttCtx, msgId: MsgId): Future[bool] =
-  var pkt = newPkt(PubAck, 0b0010)
+proc sendPubAck(ctx: MqttCtx, msgId: MsgId, qos: QoS): Future[bool] =
+  when defined(broker):
+    var pkt = newPkt(PubAck)
+  else:
+    var pkt = newPkt(PubAck, 2)
   pkt.put msgId.uint16
   result = ctx.send(pkt)
 
 proc sendPubRec(ctx: MqttCtx, msgId: MsgId): Future[bool] =
-  var pkt = newPkt(PubRec, 0b0010)
+  when defined(broker):
+    var pkt = newPkt(PubRec)
+  else:
+    var pkt = newPkt(PubRec, 2)
   pkt.put msgId.uint16
   result = ctx.send(pkt)
 
@@ -528,7 +574,10 @@ proc sendPubRel(ctx: MqttCtx, msgId: MsgId): Future[bool] =
   result = ctx.send(pkt)
 
 proc sendPubComp(ctx: MqttCtx, msgId: MsgId): Future[bool] =
-  var pkt = newPkt(PubComp, 0b0010)
+  when defined(broker):
+    var pkt = newPkt(PubComp)
+  else:
+    var pkt = newPkt(PubComp, 2)
   pkt.put msgId.uint16
   result = ctx.send(pkt)
 
@@ -543,14 +592,15 @@ proc sendConnAck(ctx: MqttCtx, flags: uint16): Future[bool] =
   result = ctx.send(pkt)
 
 #when defined(broker):
-proc sendSubAck(ctx: MqttCtx, msgId: MsgId): Future[bool] =
-  var pkt = newPkt(SubAck, 0b0010)
+proc sendSubAck(ctx: MqttCtx, msgId: MsgId, message: string): Future[bool] =
+  var pkt = newPkt(SubAck)
   pkt.put msgId.uint16
+  pkt.put message, false
   result = ctx.send(pkt)
 
 #when defined(broker):
 proc sendUnsubAck(ctx: MqttCtx, msgId: MsgId): Future[bool] =
-  var pkt = newPkt(Unsuback, 0b0010)
+  var pkt = newPkt(Unsuback)
   pkt.put msgId.uint16
   result = ctx.send(pkt)
 
@@ -568,7 +618,7 @@ proc sendWork(ctx: MqttCtx, work: Work): Future[bool] =
     result = ctx.sendPubRel(work.msgId)
 
   of PubAck:    # Subscribe qos=1 (activated from a Publish)
-    result = ctx.sendPubAck(work.msgId)
+    result = ctx.sendPubAck(work.msgId, work.qos)
 
   of PubRec:    # Subscribe qos=2 (1/2) (activated from a Publish)
     result = ctx.sendPubRec(work.msgId)
@@ -592,7 +642,7 @@ proc sendWork(ctx: MqttCtx, work: Work): Future[bool] =
 
   of SubAck:
     #when defined(broker):
-    result = ctx.sendSubAck(work.msgId)
+    result = ctx.sendSubAck(work.msgId, work.message)
 
   of Unsuback:
     #when defined(broker):
@@ -657,14 +707,16 @@ when defined(broker):
   proc sendWill(ctx: MqttCtx) {.async.} =
     ## Send the will
     if ctx.willTopic != "":
-      for c in mqttbroker.subscribers[ctx.willTopic]:
+      if ctx.willRetain:
+        retainMsg(ctx.willTopic, ctx.willMsg, ctx.willQoS, ctx.clientid)
+      for c in mqttbroker.subscribers[ctx.willTopic].ctxs:
         let msgId = c.nextMsgId()
-        let qos = qosAlign(ctx.willQos, c.subscribed[ctx.willTopic])
-        c.workQueue[msgId] = Work(wk: PubWork, msgId: msgId, topic: ctx.willTopic, qos: qos, message: ctx.willMsg, typ: Publish)
+        let qos = qosAlign(ctx.willQoS, c.subscribed[ctx.willTopic])
+        c.workQueue[msgId] = Work(wk: PubWork, msgId: msgId, topic: ctx.willTopic, qos: qos, retain: ctx.willRetain, message: ctx.willMsg, typ: Publish)
         await c.work()
 
 when defined(broker):
-  proc publishToSubscribers(seqctx: seq[MqttCtx], pkt: Pkt, topic, message: string, qos: uint8, retain: bool, senderId: string) {.async.} =
+  proc publishToSubscribers(seqctx: seq[MqttCtx], pkt: Pkt, matchedTopic, topic, message: string, qos: QoS, retain: bool, senderId: string) {.async.} =
     ## Publish async to clients
     for c in seqctx:
       if c.state != Connected:
@@ -672,7 +724,7 @@ when defined(broker):
         continue
       let
         msgId = c.nextMsgId()
-        qosSub = qosAlign(qos, c.subscribed[topic])
+        qosSub = qosAlign(qos, c.subscribed[matchedTopic])
 
       if mqttbroker.passClientId:
         c.workQueue[msgId] = Work(wk: PubWork, msgId: msgId, topic: topic, qos: qosSub, retain: retain, message: senderId & ":" & message, typ: Publish)
@@ -719,10 +771,10 @@ proc onConnect(ctx: MqttCtx, pkt: Pkt) {.async.} =
 
       # Will qos=2
       if ctx.connFlags[3] == '1':
-        ctx.willQos = 2.uint8
+        ctx.willQoS = 2
       # Will qos=1
       elif ctx.connFlags[4] == '1':
-        ctx.willQos = 1.uint8
+        ctx.willQoS = 1
 
     # Username
     if ctx.connFlags[0] == '1':
@@ -813,7 +865,7 @@ proc onConnAck(ctx: MqttCtx, pkt: Pkt): Future[void] =
 
 proc onPublish(ctx: MqttCtx, pkt: Pkt) {.async.} =
   let
-    qos = (pkt.flags shr 1) and 0x03
+    qos = QoS((pkt.flags shr 1) and 0x03)
     retain = if (pkt.flags and 0x01) == 1: true else: false
                                 # When subscribing and first message is a
                                 # retained message, this will be `1`
@@ -833,53 +885,29 @@ proc onPublish(ctx: MqttCtx, pkt: Pkt) {.async.} =
   (message, offset) = pkt.getstring(offset, false)
 
   when defined(broker):
-    # Send message to all subscribers on "#"
-    if mqttbroker.subscribers.hasKey("#"):
-      await publishToSubscribers(mqttbroker.subscribers["#"], pkt, "#", message, qos, retain, ctx.clientid)
-    # Send message to all subscribers on _the topic_
-    if mqttbroker.subscribers.hasKey(topic):
-      await publishToSubscribers(mqttbroker.subscribers[topic], pkt, topic, message, qos, retain, ctx.clientid)
+    for matchedTopic, topicCtx in mqttbroker.subscribers:
+      if matchTopic(topicCtx.templ, topic):
+        await publishToSubscribers(topicCtx.ctxs, pkt, matchedTopic, topic, message, qos, retain, ctx.clientid)
 
     if mqttbroker.verbosity >= 1:
       verbose("Client      >> " & ctx.clientId & " has published a message")
 
     if retain:
-      if qos == 0 and message == "":
+      if message == "":
         mqttbroker.retained.del(topic)
       else:
         # Add or overwrite existing retained messages on this topic.
-        mqttbroker.retained[topic] = RetainedMsg(msg: message, qos: qos, time: epochTime(), clientid: ctx.clientid)
-        # Check if client already has published a retained messaged on this topic. In that
-        # case do not add it, since the QOS, msg and time is preserved in the MqttBroker.retained.
-        if topic notin ctx.retained:
-          ctx.retained.add(topic)
+        retainMsg(topic, message, qos, ctx.clientid)
 
       if mqttbroker.verbosity >= 1:
         verbose("Retained   ", mqttbroker.retained)
 
   when not defined(broker):
     var callbacks: seq[PubCallback]
-    for top, cb in ctx.pubCallbacks:
-      if top == topic or top == "#":
-        callbacks.add(cb)
-      if top.endsWith("/#"):
-        # the multi-level wildcard can represent zero levels.
-        if topic == top[0 .. ^3]:
-          callbacks.add(cb)
-          continue
-        var topicw = top
-        topicw.removeSuffix("#")
-        if topic.contains(topicw):
-          callbacks.add(cb)
-      if top.contains("+"):
-        var topelem = split(top, '/')
-        if len(topelem) == count(topic, '/') + 1:
-          var i = 0
-          for e in split(topic, '/'):
-            if topelem[i] != "+" and e != topelem[i]: break
-            i = i+1
-          if i == len(topelem):
-            callbacks.add(cb)
+    for t in ctx.pubCallbacks.values():
+      if matchTopic(t.templ, topic):
+        callbacks.add(t.cb)
+
     for cb in callbacks:
       cb.cb(topic, message)
 
@@ -935,41 +963,44 @@ proc onSubscribe(ctx: MqttCtx, pkt: Pkt) {.async.} =
       offset: int
       msgId: MsgId
       topic: string
-      qos: uint8
+      qos: QoS
       nextLen: uint16
 
     (msgId, offset) = pkt.getu16(0)
     ctx.msgIdSeq    = msgId
 
+    var
+      newTopics: seq[string]
+      reply: string
     while offset < pkt.data.len:
       (nextLen, offset) = pkt.getu16(offset)
       (topic, offset)   = pkt.getstring(offset, parseInt($nextLen))
-      (qos, offset)     = pkt.getu8(offset)
+      (qos, offset)     = pkt.getQoS(offset)
 
       ctx.subscribed[topic] = qos
       await addSubscriber(ctx, topic)
+      newTopics.add(topic)
+      reply = reply & char(qos)
 
-    ctx.workQueue[msgId] = Work(wk: PubWork, msgId: msgId, state: WorkNew, qos: 0, typ: SubAck)
+      if mqttbroker.verbosity >= 1:
+        verbose("Client      >> " & ctx.clientId & " has subscribed to a topic")
+        verbose("Subscribers", mqttbroker.subscribers)
 
-    # Send retained messaged for #
-    if topic == "#":
-      for top, ret in mqttbroker.retained:
-        let
-          msgId = ctx.nextMsgId()
-          qosRet = qosAlign(qos, ret.qos)
-        ctx.workQueue[msgId] = Work(wk: PubWork, msgId: msgId, topic: top, qos: qosRet, message: ret.msg, typ: Publish)
-    # Send retained messaged for specific topic
-    elif mqttbroker.retained.hasKey(topic):
-      let
-        msgId = ctx.nextMsgId()
-        qosRet = qosAlign(qos, mqttbroker.retained[topic].qos)
-      ctx.workQueue[msgId] = Work(wk: PubWork, msgId: msgId, topic: topic, qos: qosRet, message: mqttbroker.retained[topic].msg, typ: Publish)
-
-    if mqttbroker.verbosity >= 1:
-      verbose("Client      >> " & ctx.clientId & " has subscribed to a topic")
-      verbose("Subscribers", mqttbroker.subscribers)
-
+    ctx.workQueue[msgId] = Work(wk: PubWork, msgId: msgId, state: WorkNew, qos: 0, message: reply, typ: SubAck)
     await ctx.work()
+
+    for topic in newTopics:
+      if topic notin mqttbroker.subscribers:
+        continue
+      let templ = mqttbroker.subscribers[topic].templ
+      for retTop, ret in mqttbroker.retained:
+        if matchTopic(templ, retTop):
+          let
+            msgId = ctx.nextMsgId()
+            qosRet = qosAlign(qos, ret.qos)
+          ctx.workQueue[msgId] = Work(wk: PubWork, msgId: msgId, topic: retTop, qos: qosRet, message: ret.msg, typ: Publish)
+
+          await ctx.work()
 
 proc onSubAck(ctx: MqttCtx, pkt: Pkt) {.async.} =
   let (msgId, _) = pkt.getu16(0)
@@ -1132,9 +1163,10 @@ proc runConnect(ctx: MqttCtx) {.async.} =
       # work() checks that `state=Connected`. Therefor our re-Subscribe
       # will be inserted first in the queue.
       if ctx.workQueue.len() == 0:
-        for topic, cb in ctx.pubCallbacks:
+        for topic, t in ctx.pubCallbacks:
           let msgId = ctx.nextMsgId()
-          ctx.workQueue[msgId] = Work(wk: SubWork, msgId: msgId, topic: topic, qos: cb.qos, typ: Subscribe)
+          ctx.workQueue[msgId] = Work(wk: SubWork, msgId: msgId, topic: topic, qos: t.cb.qos, typ: Subscribe)
+
     await sleepAsync(1000)
 
 #
@@ -1150,7 +1182,7 @@ proc setPingInterval*(ctx: MqttCtx, txInterval: int = 60) =
   if txInterval > 0 and txInterval < 65535:
     ctx.keepAlive = txInterval.uint16
 
-proc setHost*(ctx: MqttCtx, host: string, port: int=1883, sslOn=false) =
+proc setHost*(ctx: MqttCtx, host: string, port: int = 1883, sslOn = false) =
   ## Set the MQTT host.
   ctx.host = host
   ctx.port = Port(port)
@@ -1167,12 +1199,12 @@ proc setAuth*(ctx: MqttCtx, username: string, password: string) =
   ctx.username = username
   ctx.password = password
 
-proc setWill*(ctx: MqttCtx, topic, msg: string, qos=0, retain=false) =
+proc setWill*(ctx: MqttCtx, topic, msg: string, qos: QoS = 0, retain = false) =
   ## Set the clients will.
-  ctx.willFlag   = true
+  ctx.willFlag   = topic != ""
   ctx.willTopic  = topic
   ctx.willMsg    = msg
-  ctx.willQoS    = qos.uint8
+  ctx.willQoS    = qos
   ctx.willRetain = retain
 
 proc setMaxInflightMessages*(ctx: MqttCtx, maxInflightMessages: int) =
@@ -1200,7 +1232,7 @@ proc disconnect*(ctx: MqttCtx) {.async.} =
   await ctx.close("disconnect")
   ctx.state = Disabled
 
-proc publish*(ctx: MqttCtx, topic: string, message: string, qos=0, retain=false) {.async.} =
+proc publish*(ctx: MqttCtx, topic: string, message: string, qos: QoS = 0, retain = false) {.async.} =
   ## Publish a message.
   ##
   ## **Required:**
@@ -1227,7 +1259,7 @@ proc publish*(ctx: MqttCtx, topic: string, message: string, qos=0, retain=false)
   ctx.workQueue[msgId] = Work(wk: PubWork, msgId: msgId, topic: topic, qos: qos, message: message, retain: retain, typ: Publish)
   await ctx.work()
 
-proc subscribe*(ctx: MqttCtx, topic: string, qos: int, callback: PubCallback.cb): Future[void] =
+proc subscribe*(ctx: MqttCtx, topic: string, qos: QoS | int, callback: PubCallback.cb): Future[void] =
   ## Subscribe to a topic.
   ##
   ## Access the callback with:
@@ -1235,8 +1267,8 @@ proc subscribe*(ctx: MqttCtx, topic: string, qos: int, callback: PubCallback.cb)
   ##    proc callbackName(topic: string, message: string) =
   ##      echo "Topic: ", topic, ": ", message
   let msgId = ctx.nextMsgId()
-  ctx.workQueue[msgId] = Work(wk: SubWork, msgId: msgId, topic: topic, qos: qos, typ: Subscribe)
-  ctx.pubCallbacks[topic] = PubCallback(cb: callback, qos: qos)
+  ctx.workQueue[msgId] = Work(wk: SubWork, msgId: msgId, topic: topic, qos: QoS(qos), typ: Subscribe)
+  ctx.pubCallbacks[topic] = (templ: splitTopic(topic), cb: PubCallback(cb: callback, qos: QoS(qos)))
   result = ctx.work()
 
 proc unsubscribe*(ctx: MqttCtx, topic: string): Future[void] =

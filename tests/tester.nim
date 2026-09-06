@@ -10,11 +10,11 @@ include "../nmqtt.nim"
 
 randomize()
 
-proc newCtx(): MqttCtx =
+proc newCtx(autoStart: bool = true): MqttCtx =
   result = newMqttCtx("nmqttTest-" & $genOid())
   result.setHost("127.0.0.1", 1883)
-  result.setPingInterval(1200)
-  waitFor result.start()
+  if autoStart:
+    waitFor result.start()
 
 proc tout(t, m, s: string) =
   ## Print test data during test.

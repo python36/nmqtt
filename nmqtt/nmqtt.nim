@@ -26,7 +26,6 @@ proc keepAliveMonitor(ctx: MqttCtx) {.async.} =
         verbose("Connections >> " & ctx.clientid & " was disconnected. Keep alive time overdue.")
       break
 
-
 proc processClient(s: AsyncSocket) {.async.} =
   ## Create new client
   let ctx = MqttCtx()
@@ -75,10 +74,10 @@ proc processClient(s: AsyncSocket) {.async.} =
     if mqttbroker.connections.hasKey(ctx.clientid):
       mqttbroker.connections.del(ctx.clientid)
 
-    # Cleanup retained messages from client.
-    for top in ctx.retained:
-      if mqttbroker.retained[top].clientid == ctx.clientid:
-        mqttbroker.retained.del(top)
+    # # Cleanup retained messages from client.
+    # for top in ctx.retained:
+    #   if mqttbroker.retained[top].clientid == ctx.clientid:
+    #     mqttbroker.retained.del(top)
 
   if not ctx.s.isClosed() and ctx.beenConnected:
     ctx.s.close()
@@ -87,12 +86,15 @@ proc processClient(s: AsyncSocket) {.async.} =
   if mqttbroker.verbosity >= 3:
     verbose(ctx)
 
-
 proc serve(host: string, port: int) {.async.} =
   var broker = newAsyncSocket()
-  broker.setSockOpt(OptReuseAddr, true)
-  broker.bindAddr(Port(port), host)
-  broker.listen()
+  try:
+    broker.setSockOpt(OptReuseAddr, true)
+    broker.bindAddr(Port(port), host)
+    broker.listen()
+  except CatchableError as e:
+    verbose("ERROR: " & e.msg)
+    return 
 
   if mqttbroker.sslOn:
     if not fileExists(mqttbroker.sslCert) or not fileExists(mqttbroker.sslKey):
@@ -109,7 +111,6 @@ proc serve(host: string, port: int) {.async.} =
     while true:
       let client = await broker.accept()
       asyncCheck processClient(client)
-
 
 proc showConf(mb: MqttBroker, configfile: string) =
   ## Show the config details
@@ -147,7 +148,6 @@ CONFIG:
 
   """.format(configfile)
 
-
 proc loadPasswords(passwordFile: string) =
   ## Loads the usernames and passwords
   if passwordFile == "":
@@ -160,7 +160,6 @@ proc loadPasswords(passwordFile: string) =
   for line in readFile(passwordFile).split("\n"):
     let pass = split(line, ":", maxsplit=1)
     mqttbroker.passwords[pass[0]] = pass[1]
-
 
 proc loadConf(mb: MqttBroker, config: string) =
   ## Parses the config file
@@ -194,14 +193,12 @@ proc loadConf(mb: MqttBroker, config: string) =
     let passwordFile = dict.getSectionValue("","password_file")
     loadPasswords(passwordFile)
 
-
 proc handler() {.noconv.} =
   ## Catch ctrl+c from user
   echo " "
   if mqttbroker.verbosity >= 3:
     verbose(mqttbroker)
   quit()
-
 
 proc nmqttBroker(config="", host="127.0.0.1", port=1883, verbosity=0, max_conn=0,
                   clientid_maxlen=60, clientid_spaces=false, clientid_empty=false,
@@ -239,8 +236,6 @@ proc nmqttBroker(config="", host="127.0.0.1", port=1883, verbosity=0, max_conn=0
   setControlCHook(handler)
 
   runForever()
-
-
 
 when isMainModule:
 
