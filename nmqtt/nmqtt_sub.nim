@@ -59,7 +59,7 @@ proc nmqttSub(host="127.0.0.1", port=1883, ssl=false, clientid="", username="", 
     # Subscribe to topic
     await ctx.subscribe(t, qos, onData)
     if ctx.verbosity >= 1:
-      ctx.dbg "Subscribing to: " & t
+      ctx.dbg("Subscribing to: " & t)
 
   # Control CTRL+c hook
   setControlCHook(handler)

@@ -168,17 +168,17 @@ when defined(broker):
 #
 
 proc put(pkt: var Pkt, v: uint16) =
-  pkt.data.add (v.int /%  256).uint8
-  pkt.data.add (v.int mod 256).uint8
+  pkt.data.add((v.int /%  256).uint8)
+  pkt.data.add((v.int mod 256).uint8)
 
 proc put(pkt: var Pkt, v: uint8) =
-  pkt.data.add v
+  pkt.data.add(v)
 
 proc put(pkt: var Pkt, data: string, withLen: bool) =
   if withLen:
-    pkt.put data.len.uint16
+    pkt.put(data.len.uint16)
   for c in data:
-    pkt.put c.uint8
+    pkt.put(c.uint8)
 
 proc getu8(pkt: Pkt, offset: int): (uint8, int) =
   let val = pkt.data[offset]
@@ -197,18 +197,18 @@ proc getstring(pkt: Pkt, offset: int, withLen: bool): (string, int) =
   if withLen:
     var (len, offset2) = pkt.getu16(offset)
     for i in 0..<len.int:
-      val.add pkt.data[offset+i+2].char
+      val.add(pkt.data[offset+i+2].char)
     result = (val, offset2+len.int)
   else:
     for i in offset..<pkt.data.len:
-      val.add pkt.data[i].char
+      val.add(pkt.data[i].char)
     result = (val, pkt.data.len)
 
 when defined(broker):
   proc getstring(pkt: Pkt, offset: int, len: int): (string, int) =
     var val: string
     for i in offset..<len+offset:
-      val.add pkt.data[i].char
+      val.add(pkt.data[i].char)
     result = (val, len+offset)
 
 when defined(broker):
@@ -218,8 +218,8 @@ when defined(broker):
 proc `$`(pkt: Pkt): string =
   result.add $pkt.typ & "(" & $pkt.flags.toHex & "): "
   for b in pkt.data:
-    result.add b.toHex
-    result.add " "
+    result.add(b.toHex)
+    result.add(" ")
 
 proc newPkt(typ: PktType = NOTYPE, flags: uint8 = 0): Pkt =
   result.typ = typ
@@ -231,19 +231,19 @@ proc newPkt(typ: PktType = NOTYPE, flags: uint8 = 0): Pkt =
 proc dmp(ctx: MqttCtx, s: string) =
   when not defined(broker):
     if defined(dev) or ctx.verbosity >= 2:
-      stderr.write "\e[1;30m" & s & "\e[0m\n"
+      stderr.write("\e[1;30m" & s & "\e[0m\n")
   when defined(broker):
     if defined(dev) or mqttbroker.verbosity >= 2:
-      stderr.write "\e[1;30m" & s & "\e[0m\n"
+      stderr.write("\e[1;30m" & s & "\e[0m\n")
   when defined(test):
     let s = split(s, " ")
     testDmp.add(@[$(s[0] & " " & s[1]), $join(s[2..s.len-1], " ")])
 
 proc dbg(ctx: MqttCtx, s: string) =
-  stderr.write "\e[37m" & s & "\e[0m\n"
+  stderr.write("\e[37m" & s & "\e[0m\n")
 
 proc verbose(s: string) =
-  stderr.write "\e[37m" & s & "\e[0m\n"
+  stderr.write("\e[37m" & s & "\e[0m\n")
 
 when defined(broker):
   proc verbose(e: string, s: Table) =
@@ -255,7 +255,7 @@ when defined(broker):
         output.add("{" & t & "}")
       else:
         output.add("{" & t & ": " & $c.ctxs.len & "}")
-    stderr.write "\e[37m" & e & " >> " & output & "\e[0m\n"
+    stderr.write("\e[37m" & e & " >> " & output & "\e[0m\n")
 
   proc verbose(ctx: auto) =
     var output: string
@@ -271,15 +271,15 @@ when defined(broker):
         output.add("  " & t & ": " & $c & "\n")
 
     when ctx is MqttBroker:
-      stderr.write "\e[37m" & "Broker      >>\n" & output & "\e[0m\n"
+      stderr.write("\e[37m" & "Broker      >>\n" & output & "\e[0m\n")
     when ctx is MqttCtx:
-      stderr.write "\e[37m" & "Client      >> " & ctx.clientid & "\n" & output & "\e[0m\n"
+      stderr.write("\e[37m" & "Client      >> " & ctx.clientid & "\n" & output & "\e[0m\n")
 
 proc wrn(ctx: MqttCtx, s: string) =
-  stderr.write "\e[1;31mWarning >> " & s & "\e[0m\n"
+  stderr.write("\e[1;31mWarning >> " & s & "\e[0m\n")
 
 proc wrn(s: string) =
-  stderr.write "\e[1;31mWarning >> " & s & "\e[0m\n"
+  stderr.write("\e[1;31mWarning >> " & s & "\e[0m\n")
 
 #
 # Subscribers
@@ -393,7 +393,7 @@ proc close(ctx: MqttCtx, reason: string) {.async.} =
   if ctx.state in {Connecting, Connected}:
     ctx.state = Disconnecting
     if ctx.verbosity >= 1:
-      ctx.dbg "Closing: " & reason
+      ctx.dbg("Closing: " & reason)
     discard await ctx.sendDisconnect()
     ctx.s.close()
     ctx.state = Disconnected
@@ -412,11 +412,13 @@ proc send(ctx: MqttCtx, pkt: Pkt): Future[bool] {.async.} =
     len = len div 128
     if len > 0:
       b = b or 128
-    buf.add b.uint8
+    buf.add(b.uint8)
     if len == 0:
       break
 
-  ctx.dmp "tx> " & $pkt
+  # TODO:
+  # only when test
+  ctx.dmp("tx> " & $pkt)
   if pkt.data.len > 0:
     let hdrlen = buf.len
     buf.setLen(hdrlen + pkt.data.len)
@@ -468,7 +470,7 @@ proc recv(ctx: MqttCtx): Future[Pkt] {.async.} =
       break
 
   if len > 0:
-    pkt.data.setlen len
+    pkt.data.setLen(len)
 
     var offset = 0
     while offset < len:
@@ -485,7 +487,7 @@ proc recv(ctx: MqttCtx): Future[Pkt] {.async.} =
         await ctx.close("remote closed connection")
       return
 
-  ctx.dmp "rx> " & $pkt
+  ctx.dmp("rx> " & $pkt)
   return pkt
 
 proc sendConnect(ctx: MqttCtx): Future[bool] =
@@ -506,21 +508,21 @@ proc sendConnect(ctx: MqttCtx): Future[bool] =
     flags = flags or PasswordFlag.uint8
 
   var pkt = newPkt(Connect)
-  pkt.put "MQTT", true
-  pkt.put 4.uint8
-  pkt.put flags
-  pkt.put ctx.keepAlive.uint16
-  pkt.put ctx.clientId, true
+  pkt.put("MQTT", true)
+  pkt.put(4.uint8)
+  pkt.put(flags)
+  pkt.put(ctx.keepAlive.uint16)
+  pkt.put(ctx.clientId, true)
 
   if ctx.willFlag:
-    pkt.put (ctx.willTopic.len).uint16
-    pkt.put ctx.willTopic, false
-    pkt.put (ctx.willMsg.len).uint16
-    pkt.put ctx.willMsg, false
+    pkt.put((ctx.willTopic.len).uint16)
+    pkt.put(ctx.willTopic, false)
+    pkt.put((ctx.willMsg.len).uint16)
+    pkt.put(ctx.willMsg, false)
   if ctx.username != "":
-    pkt.put ctx.username, true
+    pkt.put(ctx.username, true)
   if ctx.password != "":
-    pkt.put ctx.password, true
+    pkt.put(ctx.password, true)
   ctx.state = Connecting
   result = ctx.send(pkt)
 
@@ -530,15 +532,15 @@ proc sendDisconnect(ctx: MqttCtx): Future[bool] =
 
 proc sendSubscribe(ctx: MqttCtx, msgId: MsgId, topic: string, qos: QoS): Future[bool] =
   var pkt = newPkt(Subscribe, 0b0010)
-  pkt.put msgId.uint16
-  pkt.put topic, true
-  pkt.put qos.uint8
+  pkt.put(msgId.uint16)
+  pkt.put(topic, true)
+  pkt.put(qos.uint8)
   result = ctx.send(pkt)
 
 proc sendUnsubscribe(ctx: MqttCtx, msgId: MsgId, topic: string): Future[bool] =
   var pkt = newPkt(Unsubscribe, 0b0010)
-  pkt.put msgId.uint16
-  pkt.put topic, true
+  pkt.put(msgId.uint16)
+  pkt.put(topic, true)
   result = ctx.send(pkt)
 
 proc sendPublish(ctx: MqttCtx, msgId: MsgId, topic: string, message: string, qos: QoS, retain: bool): Future[bool] =
@@ -546,10 +548,10 @@ proc sendPublish(ctx: MqttCtx, msgId: MsgId, topic: string, message: string, qos
   if retain:
     flags = flags or 1
   var pkt = newPkt(Publish, flags)
-  pkt.put topic, true
+  pkt.put(topic, true)
   if qos > 0:
-    pkt.put msgId.uint16
-  pkt.put message, false
+    pkt.put(msgId.uint16)
+  pkt.put(message, false)
   result = ctx.send(pkt)
 
 proc sendPubAck(ctx: MqttCtx, msgId: MsgId, qos: QoS): Future[bool] =
@@ -557,7 +559,7 @@ proc sendPubAck(ctx: MqttCtx, msgId: MsgId, qos: QoS): Future[bool] =
     var pkt = newPkt(PubAck)
   else:
     var pkt = newPkt(PubAck, 2)
-  pkt.put msgId.uint16
+  pkt.put(msgId.uint16)
   result = ctx.send(pkt)
 
 proc sendPubRec(ctx: MqttCtx, msgId: MsgId): Future[bool] =
@@ -565,12 +567,12 @@ proc sendPubRec(ctx: MqttCtx, msgId: MsgId): Future[bool] =
     var pkt = newPkt(PubRec)
   else:
     var pkt = newPkt(PubRec, 2)
-  pkt.put msgId.uint16
+  pkt.put(msgId.uint16)
   result = ctx.send(pkt)
 
 proc sendPubRel(ctx: MqttCtx, msgId: MsgId): Future[bool] =
   var pkt = newPkt(PubRel, 0b0010)
-  pkt.put msgId.uint16
+  pkt.put(msgId.uint16)
   result = ctx.send(pkt)
 
 proc sendPubComp(ctx: MqttCtx, msgId: MsgId): Future[bool] =
@@ -578,7 +580,7 @@ proc sendPubComp(ctx: MqttCtx, msgId: MsgId): Future[bool] =
     var pkt = newPkt(PubComp)
   else:
     var pkt = newPkt(PubComp, 2)
-  pkt.put msgId.uint16
+  pkt.put(msgId.uint16)
   result = ctx.send(pkt)
 
 proc sendPingReq(ctx: MqttCtx): Future[bool] =
@@ -588,20 +590,20 @@ proc sendPingReq(ctx: MqttCtx): Future[bool] =
 #when defined(broker):
 proc sendConnAck(ctx: MqttCtx, flags: uint16): Future[bool] =
   var pkt = newPkt(ConnAck)
-  pkt.put flags.uint16
+  pkt.put(flags.uint16)
   result = ctx.send(pkt)
 
 #when defined(broker):
 proc sendSubAck(ctx: MqttCtx, msgId: MsgId, message: string): Future[bool] =
   var pkt = newPkt(SubAck)
-  pkt.put msgId.uint16
-  pkt.put message, false
+  pkt.put(msgId.uint16)
+  pkt.put(message, false)
   result = ctx.send(pkt)
 
 #when defined(broker):
 proc sendUnsubAck(ctx: MqttCtx, msgId: MsgId): Future[bool] =
   var pkt = newPkt(Unsuback)
-  pkt.put msgId.uint16
+  pkt.put(msgId.uint16)
   result = ctx.send(pkt)
 
 #when defined(broker):
@@ -666,14 +668,14 @@ proc work(ctx: MqttCtx) {.async.} =
       #when defined(broker):
       if work.typ in [ConnAck, SubAck, UnsubAck, PingResp]:
         if await ctx.sendWork(work):
-          ctx.workQueue.del msgId
+          ctx.workQueue.del(msgId)
           continue
 
       if work.wk == PubWork and work.state == WorkNew:
         if work.typ == Publish:
           if work.qos == 0:
             if await ctx.sendWork(work):
-              ctx.workQueue.del msgId
+              ctx.workQueue.del(msgId)
 
           elif hasInflightSlots(ctx):
             if await ctx.sendWork(work):
@@ -681,11 +683,11 @@ proc work(ctx: MqttCtx) {.async.} =
 
         elif work.typ == PubAck and work.qos == 1:
           if await ctx.sendWork(work):
-            ctx.workQueue.del msgId
+            ctx.workQueue.del(msgId)
 
         elif work.typ == PubComp and work.qos == 2:
           if await ctx.sendWork(work):
-            ctx.workQueue.del msgId
+            ctx.workQueue.del(msgId)
 
         else:
           if await ctx.sendWork(work):
@@ -699,7 +701,7 @@ proc work(ctx: MqttCtx) {.async.} =
         elif work.typ == Unsubscribe:
           if await ctx.sendWork(work):
             work.state = WorkSent
-            ctx.pubCallbacks.del work.topic
+            ctx.pubCallbacks.del(work.topic)
 
   ctx.inWork = false
 
@@ -742,7 +744,7 @@ when defined(broker):
 #when defined(broker):
 proc onConnect(ctx: MqttCtx, pkt: Pkt) {.async.} =
   when not defined(broker):
-    ctx.wrn "Packet type only supported for broker: " & $pkt.typ
+    ctx.wrn("Packet type only supported for broker: " & $pkt.typ)
   else:
     var
       offset: int
@@ -858,9 +860,9 @@ proc onConnAck(ctx: MqttCtx, pkt: Pkt): Future[void] =
   if code == 0:
     ctx.beenConnected = true
     if ctx.verbosity >= 1:
-      ctx.dbg "Connection established"
+      ctx.dbg("Connection established")
   else:
-    ctx.wrn "Connect failed, code: " & $code
+    ctx.wrn("Connect failed, code: " & $code)
   result = ctx.work()
 
 proc onPublish(ctx: MqttCtx, pkt: Pkt) {.async.} =
@@ -924,7 +926,7 @@ proc onPubAck(ctx: MqttCtx, pkt: Pkt) {.async.} =
   assert ctx.workQueue[msgId].wk == PubWork
   assert ctx.workQueue[msgId].state == WorkSent
   assert ctx.workQueue[msgId].qos == 1
-  ctx.workQueue.del msgId
+  ctx.workQueue.del(msgId)
   await ctx.work()
 
 proc onPubRec(ctx: MqttCtx, pkt: Pkt) {.async.} =
@@ -951,13 +953,13 @@ proc onPubComp(ctx: MqttCtx, pkt: Pkt) {.async.} =
   assert ctx.workQueue[msgId].wk == PubWork
   assert ctx.workQueue[msgId].state == WorkSent
   assert ctx.workQueue[msgId].qos == 2
-  ctx.workQueue.del msgId
+  ctx.workQueue.del(msgId)
   await ctx.work()
 
 #when defined(broker):
 proc onSubscribe(ctx: MqttCtx, pkt: Pkt) {.async.} =
   when not defined(broker):
-    ctx.wrn "Packet type only supported for broker: " & $pkt.typ
+    ctx.wrn("Packet type only supported for broker: " & $pkt.typ)
   else:
     var
       offset: int
@@ -1007,12 +1009,12 @@ proc onSubAck(ctx: MqttCtx, pkt: Pkt) {.async.} =
   assert msgId in ctx.workQueue
   assert ctx.workQueue[msgId].wk == SubWork
   assert ctx.workQueue[msgId].state == WorkSent
-  ctx.workQueue.del msgId
+  ctx.workQueue.del(msgId)
 
 #when defined(broker):
 proc onUnsubscribe(ctx: MqttCtx, pkt: Pkt) {.async.} =
   when not defined(broker):
-    ctx.wrn "Packet type only supported for broker: " & $pkt.typ
+    ctx.wrn("Packet type only supported for broker: " & $pkt.typ)
   else:
     var
       offset: int
@@ -1042,12 +1044,12 @@ proc onUnsubAck(ctx: MqttCtx, pkt: Pkt) {.async.} =
   assert msgId in ctx.workQueue
   assert ctx.workQueue[msgId].wk == SubWork
   assert ctx.workQueue[msgId].state == WorkSent
-  ctx.workQueue.del msgId
+  ctx.workQueue.del(msgId)
 
 #when defined(broker):
 proc onDisconnect(ctx: MqttCtx, pkt: Pkt) {.async.} =
   when not defined(broker):
-    ctx.wrn "Packet type only supported for broker: " & $pkt.typ
+    ctx.wrn("Packet type only supported for broker: " & $pkt.typ)
   else:
     #await removeSubscriber(ctx)
     #await sendWill(ctx)
@@ -1058,7 +1060,7 @@ proc onDisconnect(ctx: MqttCtx, pkt: Pkt) {.async.} =
 #when defined(broker):
 proc onPingReq(ctx: MqttCtx, pkt: Pkt) {.async.} =
   when not defined(broker):
-    ctx.wrn "Packet type only supported for broker: " & $pkt.typ
+    ctx.wrn("Packet type only supported for broker: " & $pkt.typ)
   else:
     var msgId = ctx.nextMsgId() + 1000
     while ctx.workQueue.hasKey(msgId):
@@ -1089,7 +1091,7 @@ proc handle(ctx: MqttCtx, pkt: Pkt) {.async.} =
     of Unsubscribe: await ctx.onUnsubscribe(pkt)
     of Disconnect: await ctx.onDisconnect(pkt)
     of PingReq: await ctx.onPingReq(pkt)
-    else: ctx.wrn "Unknown pkt type " & $pkt.typ
+    else: ctx.wrn("Unknown pkt type " & $pkt.typ)
 
 #
 # Async work functions
@@ -1104,7 +1106,7 @@ proc runRx(ctx: MqttCtx) {.async.} =
       await ctx.handle(pkt)
   except OsError:
     if ctx.verbosity >= 2:
-      ctx.wrn "Boom, socket is closed"
+      ctx.wrn("Boom, socket is closed")
 
 proc runPing(ctx: MqttCtx) {.async.} =
   while true:
@@ -1120,7 +1122,7 @@ proc connectBroker(ctx: MqttCtx) {.async.} =
     ctx.keepAlive = 60
 
   if ctx.verbosity >= 1:
-    ctx.dbg "Connecting to " & ctx.host & ":" & $ctx.port
+    ctx.dbg("Connecting to " & ctx.host & ":" & $ctx.port)
 
   ctx.state = Error # set to Connecting by sendConnect
 
@@ -1130,7 +1132,7 @@ proc connectBroker(ctx: MqttCtx) {.async.} =
       ctx.ssl = newContext(protSSLv23, CVerifyNone, ctx.sslCert, ctx.sslKey)
       wrapConnectedSocket(ctx.ssl, ctx.s, handshakeAsClient)
     else:
-      ctx.wrn "Requested SSL session but ssl is not enabled"
+      ctx.wrn("Requested SSL session but ssl is not enabled")
       await ctx.close("SSL not enabled")
 
   let ok = await ctx.sendConnect()
@@ -1150,7 +1152,7 @@ proc runConnect(ctx: MqttCtx) {.async.} =
         await ctx.connectBroker()
       except OSError as e:
         if ctx.verbosity >= 1 or not ctx.beenConnected:
-          ctx.dbg "Error connecting to " & ctx.host
+          ctx.dbg("Error connecting to " & ctx.host)
         if ctx.verbosity >= 2:
           echo e.msg
         ctx.state = Error
