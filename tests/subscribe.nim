@@ -8,23 +8,26 @@ suite "test suite for subscribe":
       (tpc, msg) = tdata("subscribe to topic qos=0")
 
     proc conn() {.async.} =
+      var receivedMsg: bool
+
       proc onDataSubQoS0(topic: string, message: string) =
-        if topic == tpc:
-          check(message == msg)
-          return
+        if topic == tpc and message == msg:
+          receivedMsg = true
+
       await ctxListen.subscribe(tpc, 0, onDataSubQoS0)
       await sleepAsync(500)
       await ctxMain.publish(tpc, msg, 0)
       await sleepAsync(500)
-      await ctxListen.unsubscribe(tpc)
-      await sleepAsync(500)
 
+      check(receivedMsg == true)
       check(hasAllInDmp(@["tx> Subscribe(02):",
                           "rx> SubAck(00):",
                           "tx> Publish(00):",
                           "rx> Publish(00):"]))
 
     waitFor conn()
+    waitFor ctxMain.disconnect()
+    waitFor ctxListen.disconnect()
 
   test "subscribe to topic qos=1":
     let
@@ -33,10 +36,11 @@ suite "test suite for subscribe":
       (tpc, msg) = tdata("subscribe to topic qos=1")
 
     proc conn() {.async.} =
+      var receivedMsg: bool
+
       proc onDataSubQoS1(topic: string, message: string) =
-        if topic == tpc:
-          check(message == msg)
-          return
+        if topic == tpc and message == msg:
+          receivedMsg = true
 
       await ctxListen.subscribe(tpc, 1, onDataSubQoS1)
       await sleepAsync(500)
@@ -45,6 +49,7 @@ suite "test suite for subscribe":
       await ctxListen.unsubscribe(tpc)
       await sleepAsync(500)
 
+      check(receivedMsg == true)
       check(hasAllInDmp(@["tx> Subscribe(02):",
                           "rx> SubAck(00):",
                           "tx> Publish(02):",
@@ -53,6 +58,8 @@ suite "test suite for subscribe":
                           "tx> PubAck(02):"]))
 
     waitFor conn()
+    waitFor ctxMain.disconnect()
+    waitFor ctxListen.disconnect()
 
   test "subscribe to topic qos=2":
     let
@@ -61,10 +68,11 @@ suite "test suite for subscribe":
       (tpc, msg) = tdata("subscribe to topic qos=2")
 
     proc conn() {.async.} =
+      var receivedMsg: bool
+
       proc onDataSubQoS2(topic: string, message: string) =
-        if topic == tpc:
-          check(message == msg)
-          return
+        if topic == tpc and message == msg:
+          receivedMsg = true
 
       await ctxListen.subscribe(tpc, 2, onDataSubQoS2)
       await sleepAsync(500)
@@ -73,6 +81,7 @@ suite "test suite for subscribe":
       await ctxListen.unsubscribe(tpc)
       await sleepAsync(500)
 
+      check(receivedMsg == true)
       check(hasAllInDmp(@["tx> Subscribe(02):",
                           "rx> SubAck(00):",
                           "tx> Publish(04):",
@@ -85,39 +94,45 @@ suite "test suite for subscribe":
                           "tx> PubComp(02):"]))
 
     waitFor conn()
+    waitFor ctxMain.disconnect()
+    waitFor ctxListen.disconnect()
 
   test "subscribe to multiple topics":
     let
       ctxMain = newCtx()
       ctxListen = newCtx()
       (tpc, msg) = tdata("subscribe to multiple topics")
+      tpc1 = tpc & "-1"
+      tpc2 = tpc & "-2"
+      msg1 = msg & "-mul1"
+      msg2 = msg & "-mul2"
 
     proc conn() {.async.} =
-      var topic1, topic2: bool
+      var
+        receivedMsg1: bool
+        receivedMsg2: bool
 
       proc onDataSubMul1(topic: string, message: string) =
-        check(message == msg & "-mul1")
-        check(not topic1)
-        topic1 = true
+        if topic == tpc1 and message == msg1:
+          receivedMsg1 = true
 
       proc onDataSubMul2(topic: string, message: string) =
-        check(message == msg & "-mul2")
-        check(not topic2)
-        topic2 = true
+        if topic == tpc2 and message == msg2:
+          receivedMsg2 = true
 
-      await ctxListen.subscribe(tpc & "-1", 0, onDataSubMul1)
-      await ctxListen.subscribe(tpc & "-2", 0, onDataSubMul2)
+      await ctxListen.subscribe(tpc1, 0, onDataSubMul1)
+      await ctxListen.subscribe(tpc2, 0, onDataSubMul2)
       await sleepAsync(500)
-      await ctxMain.publish(tpc & "-1", msg & "-mul1", 0)
-      await ctxMain.publish(tpc & "-2", msg & "-mul2", 0)
+      await ctxMain.publish(tpc1, msg1, 0)
+      await ctxMain.publish(tpc2, msg2, 0)
       await sleepAsync(500)
-      await ctxListen.unsubscribe(tpc & "-1")
-      await ctxListen.unsubscribe(tpc & "-2")
 
-      check(topic1)
-      check(topic2)
+      check(receivedMsg1 == true)
+      check(receivedMsg2 == true)
 
     waitFor conn()
+    waitFor ctxMain.disconnect()
+    waitFor ctxListen.disconnect()
 
   test "subscribe to multiple with identical topic":
     let
@@ -129,15 +144,15 @@ suite "test suite for subscribe":
       var sub1, sub2, sub3: int
 
       proc onDataSubMul1(topic: string, message: string) =
-        if topic == tpc:
+        if topic == tpc and message == msg:
           sub1 += 1
 
       proc onDataSubMul2(topic: string, message: string) =
-        if topic == tpc:
+        if topic == tpc and message == msg:
           sub2 += 1
 
       proc onDataSubMul3(topic: string, message: string) =
-        if topic == tpc:
+        if topic == tpc and message == msg:
           sub3 += 1
 
       check(ctxListen.pubCallbacks.len() == 0)
@@ -171,105 +186,296 @@ suite "test suite for subscribe":
       check(sub3 == 3)
 
     waitFor conn()
+    waitFor ctxMain.disconnect()
+    waitFor ctxListen.disconnect()
 
   test "subscribe to #":
     let
       ctxMain = newCtx()
       ctxListen = newCtx()
       (tpc, msg) = tdata("subscribe to #")
+      tpc1 = tpc & "/random1"
+      tpc2 = tpc & "/random2/1"
+      tpc3 = tpc & "/random3/2/1/0"
 
     proc conn() {.async.} =
-      var msgCount: int
+      var 
+        receivedTpc1: bool
+        receivedTpc2: bool
+        receivedTpc3: bool
 
       proc onDataSubAll(topic: string, message: string) =
-         msgCount += 1
+        if topic == tpc1 and message == msg:
+          receivedTpc1 = true
+        elif topic == tpc2 and message == msg:
+          receivedTpc2 = true
+        elif topic == tpc3 and message == msg:
+          receivedTpc3 = true
 
-      await ctxListen.subscribe(tpc & "/#", 0, onDataSubAll)
+      await ctxListen.subscribe("#", 0, onDataSubAll)
       await sleepAsync(500)
-      await ctxMain.publish(tpc & "/random1", msg, 0)
-      await ctxMain.publish(tpc & "/random2/1", msg, 0)
-      await ctxMain.publish(tpc & "/random3/2/1/0", msg, 0)
-      await sleepAsync(500)
-      await ctxListen.unsubscribe(tpc & "/#")
+      check(receivedTpc1 == false)
+      check(receivedTpc2 == false)
+      check(receivedTpc3 == false)
 
-      check(msgCount == 3)
+      await ctxMain.publish(tpc1, msg, 0)
+      await ctxMain.publish(tpc2, msg, 0)
+      await ctxMain.publish(tpc3, msg, 0)
+      await sleepAsync(500)
+
+      check(receivedTpc1 == true)
+      check(receivedTpc2 == true)
+      check(receivedTpc3 == true)
 
     waitFor conn()
+    waitFor ctxMain.disconnect()
+    waitFor ctxListen.disconnect()
 
   test "subscribe to test/#":
     let
       ctxMain = newCtx()
       ctxListen = newCtx()
+      ctxOther = newCtx()
       (tpc, msg) = tdata("subscribe to test/#")
+      tpc1 = tpc & "/test/random1"
+      tpc2 = tpc & "/test/"
+      tpc3 = tpc & "/test"
+      tpc4 = tpc & "/test/random3/2"
 
     proc conn() {.async.} =
-      var msgCount: int
+      var 
+        receivedTpc1: bool
+        receivedTpc2: bool
+        receivedTpc3: bool
+        receivedTpc4: bool
 
       proc onDataSubWild(topic: string, message: string) =
-        msgCount += 1
+        check(message == msg)
+        if topic == tpc1:
+          receivedTpc1 = true
+        elif topic == tpc2:
+          receivedTpc2 = true
+        elif topic == tpc3:
+          receivedTpc3 = true
+        elif topic == tpc4:
+          receivedTpc4 = true
+
+      proc empty(topic: string, message: string) =
+        discard
 
       await ctxListen.subscribe(tpc & "/test/#", 0, onDataSubWild)
+      await ctxListen.subscribe(tpc & "/second/#", 0, empty)
+      await ctxOther.subscribe(tpc & "/second/#", 0, empty)
       await sleepAsync(500)
-      await ctxMain.publish(tpc & "/test/random1", msg, 0)
-      await ctxMain.publish(tpc & "/second/random2", msg, 0)
-      await ctxMain.publish(tpc & "/test", msg, 0)
-      await ctxMain.publish(tpc & "/test/random3/2", msg, 0)
-      await sleepAsync(500)
-      await ctxListen.unsubscribe(tpc & "/test/#")
+      check(receivedTpc1 == false)
+      check(receivedTpc2 == false)
+      check(receivedTpc3 == false)
+      check(receivedTpc4 == false)
 
-      check(msgCount == 3)
+      await ctxMain.publish(tpc1, msg, 0)
+      await ctxMain.publish(tpc & "/second/random2", msg, 0)
+      await ctxMain.publish(tpc2, msg, 0)
+      await ctxMain.publish(tpc3, msg, 0)
+      await ctxMain.publish(tpc4, msg, 0)
+      await sleepAsync(500)
+
+      check(receivedTpc1 == true)
+      check(receivedTpc2 == true)
+      check(receivedTpc3 == true)
+      check(receivedTpc4 == true)
 
     waitFor conn()
+    waitFor ctxMain.disconnect()
+    waitFor ctxListen.disconnect()
+    waitFor ctxOther.disconnect()
 
   test "subscribe to test/+":
     let
       ctxMain = newCtx()
       ctxListen = newCtx()
       (tpc, msg) = tdata("subscribe to test/+")
+      tpc1 = tpc & "/test/random1"
+      tpc2 = tpc & "/test/"
+      tpc3 = tpc & "/test/3"
 
     proc conn() {.async.} =
-      var msgCount: int
+      var 
+        receivedTpc1: bool
+        receivedTpc2: bool
+        receivedTpc3: bool
 
       proc onDataSubWild(topic: string, message: string) =
-        msgCount += 1
+        check(message == msg)
+        if topic == tpc1:
+          receivedTpc1 = true
+        elif topic == tpc2:
+          receivedTpc2 = true
+        elif topic == tpc3:
+          receivedTpc3 = true
 
       await ctxListen.subscribe(tpc & "/test/+", 0, onDataSubWild)
       await sleepAsync(500)
-      await ctxMain.publish(tpc & "/test/random1", msg, 0)
+      check(receivedTpc1 == false)
+      check(receivedTpc2 == false)
+      check(receivedTpc3 == false)
+
+      await ctxMain.publish(tpc1, msg, 0)
       await ctxMain.publish(tpc & "/second/random2", msg, 0)
       await ctxMain.publish(tpc & "/test", msg, 0)
-      await ctxMain.publish(tpc & "/test/random3", msg, 0)
+      await ctxMain.publish(tpc2, msg, 0)
+      await ctxMain.publish(tpc3, msg, 0)
       await ctxMain.publish(tpc & "/test/random3/2", msg, 0)
       await sleepAsync(500)
-      await ctxListen.unsubscribe(tpc & "/test/+")
-      check(msgCount == 2)
+
+      check(receivedTpc1 == true)
+      check(receivedTpc2 == true)
+      check(receivedTpc3 == true)
 
     waitFor conn()
+    waitFor ctxMain.disconnect()
+    waitFor ctxListen.disconnect()
 
-  test "subscribe to test/+/test":
+  test "subscribe to test/+/data":
     let
       ctxMain = newCtx()
       ctxListen = newCtx()
-      (tpc, msg) = tdata("subscribe to test/+/test")
+      (tpc, msg) = tdata("subscribe to test/+/data")
+      tpc1 = tpc & "test/1/data"
+      tpc2 = tpc & "test/random4/data"
+      tpc3 = tpc & "test//data"
 
     proc conn() {.async.} =
-      var msgCount: int
+      var 
+        receivedTpc1: bool
+        receivedTpc2: bool
+        receivedTpc3: bool
 
       proc onDataSubWild(topic: string, message: string) =
-        msgCount += 1
+        check(message == msg)
+        if topic == tpc1:
+          receivedTpc1 = true
+        elif topic == tpc2:
+          receivedTpc2 = true
+        elif topic == tpc3:
+          receivedTpc3 = true
 
       await ctxListen.subscribe(tpc & "test/+/data", 0, onDataSubWild)
       await sleepAsync(500)
+      check(receivedTpc1 == false)
+      check(receivedTpc2 == false)
+      check(receivedTpc3 == false)
+
+      await ctxMain.publish(tpc1, msg, 0)
+      await ctxMain.publish(tpc & "second/random2/data", msg, 0)
+      await ctxMain.publish(tpc & "test/random3", msg, 0)
+      await ctxMain.publish(tpc2, msg, 0)
+      await ctxMain.publish(tpc3, msg, 0)
+      await ctxMain.publish(tpc & "test/random5/data/random6", msg, 0)
+      await sleepAsync(500)
+
+      check(receivedTpc1 == true)
+      check(receivedTpc2 == true)
+      check(receivedTpc3 == true)
+
+    waitFor conn()
+
+  test "subscribe to test/+/+/data":
+    let
+      ctxMain = newCtx()
+      ctxListen = newCtx()
+      (tpc, msg) = tdata("subscribe to test/+/+/data")
+      tpc1 = tpc & "test/random5/random6/data"
+      tpc2 = tpc & "test///data"
+      tpc3 = tpc & "test/0/1/data"
+
+    proc conn() {.async.} =
+      var 
+        receivedTpc1: bool
+        receivedTpc2: bool
+        receivedTpc3: bool
+
+      proc onDataSubWild(topic: string, message: string) =
+        check(message == msg)
+        if topic == tpc1:
+          receivedTpc1 = true
+        elif topic == tpc2:
+          receivedTpc2 = true
+        elif topic == tpc3:
+          receivedTpc3 = true
+
+      await ctxListen.subscribe(tpc & "test/+/+/data", 0, onDataSubWild)
+      await sleepAsync(500)
+      check(receivedTpc1 == false)
+      check(receivedTpc2 == false)
+      check(receivedTpc3 == false)
+
       await ctxMain.publish(tpc & "test/random1/data", msg, 0)
       await ctxMain.publish(tpc & "second/random2/data", msg, 0)
       await ctxMain.publish(tpc & "test/random3", msg, 0)
       await ctxMain.publish(tpc & "test/random4/data", msg, 0)
-      await ctxMain.publish(tpc & "test/random5/data/random6", msg, 0)
+      await ctxMain.publish(tpc & "test/random5/random6/data", msg, 0)
+      await ctxMain.publish(tpc & "test///data", msg, 0)
+      await ctxMain.publish(tpc & "test/random5/random6/random7/data", msg, 0)
+      await ctxMain.publish(tpc & "test/random5/random6/data/random8", msg, 0)
+      await ctxMain.publish(tpc & "test/0/1/data", msg, 0)
       await sleepAsync(500)
-      await ctxListen.unsubscribe(tpc & "test/+/data")
-      check(msgCount == 2)
+
+      check(receivedTpc1 == true)
+      check(receivedTpc2 == true)
+      check(receivedTpc3 == true)
 
     waitFor conn()
+    waitFor ctxMain.disconnect()
+    waitFor ctxListen.disconnect()
+
+  test "subscribe to test/+/data/#":
+    let
+      ctxMain = newCtx()
+      ctxListen = newCtx()
+      (tpc, msg) = tdata("subscribe to test/+/data/#")
+      tpc1 = tpc & "test//data"
+      tpc2 = tpc & "test/random5/data/"
+      tpc3 = tpc & "test/random5/data/random6/random7/random8"
+
+    proc conn() {.async.} =
+      var 
+        receivedTpc1: bool
+        receivedTpc2: bool
+        receivedTpc3: bool
+
+      proc onDataSubWild(topic: string, message: string) =
+        check(message == msg)
+        if topic == tpc1:
+          receivedTpc1 = true
+        elif topic == tpc2:
+          receivedTpc2 = true
+        elif topic == tpc3:
+          receivedTpc3 = true
+
+      await ctxListen.subscribe(tpc & "test/+/data/#", 0, onDataSubWild)
+      await sleepAsync(500)
+      check(receivedTpc1 == false)
+      check(receivedTpc2 == false)
+      check(receivedTpc3 == false)
+
+      await ctxMain.publish(tpc & "test/random0/random1/data", msg, 0)
+      await ctxMain.publish(tpc & "second/random2/data", msg, 0)
+      await ctxMain.publish(tpc & "second/random2/data/test", msg, 0)
+      await ctxMain.publish(tpc & "test/random3", msg, 0)
+      await ctxMain.publish(tpc1, msg, 0)
+      await ctxMain.publish(tpc2, msg, 0)
+      await ctxMain.publish(tpc & "test/random5//data/random6/random7", msg, 0)
+      await ctxMain.publish(tpc3, msg, 0)
+      await ctxMain.publish(tpc & "random1/test/random5/data/random6/random7", msg, 0)
+      await sleepAsync(500)
+
+      check(receivedTpc1 == true)
+      check(receivedTpc2 == true)
+      check(receivedTpc3 == true)
+
+    waitFor conn()
+    waitFor ctxMain.disconnect()
+    waitFor ctxListen.disconnect()
 
   test "stay subscribed after disconnect with reconnect":
     let
@@ -281,7 +487,8 @@ suite "test suite for subscribe":
       var msgCount: int
 
       proc onDataSubKeep(topic: string, message: string) =
-        msgCount += 1
+        if topic == tpc and message == msg:
+          msgCount += 1
 
       await ctxListen.subscribe(tpc, 0, onDataSubKeep)
       await sleepAsync(500)
@@ -322,6 +529,8 @@ suite "test suite for subscribe":
       await ctxListen.disconnect()
 
     waitFor conn()
+    waitFor ctxMain.disconnect()
+    waitFor ctxListen.disconnect()
 
   test "stay subscribed after disconnect with reconnect with same qos=2":
     let
@@ -333,7 +542,8 @@ suite "test suite for subscribe":
       var msgCount: int
 
       proc onDataSubKeep(topic: string, message: string) =
-        msgCount += 1
+        if topic == tpc and message == msg:
+          msgCount += 1
 
       await ctxListen.subscribe(tpc, 2, onDataSubKeep)
       await sleepAsync(500)
@@ -375,6 +585,8 @@ suite "test suite for subscribe":
                           "rx> Unsuback(00):"]))
 
     waitFor conn()
+    waitFor ctxMain.disconnect()
+    waitFor ctxListen.disconnect()
 
   test "stay subscribed after multipe (2) disconnect with reconnect":
     let
@@ -386,7 +598,8 @@ suite "test suite for subscribe":
       var msgCount: int
 
       proc onDataSubKeepMultiple(topic: string, message: string) =
-        msgCount += 1
+        if topic == tpc and message == msg:
+          msgCount += 1
 
       await ctxListen.subscribe(tpc, 0, onDataSubKeepMultiple)
       await sleepAsync(500)
@@ -437,6 +650,8 @@ suite "test suite for subscribe":
                           "rx> Unsuback(00):"]))
 
     waitFor conn()
+    waitFor ctxMain.disconnect()
+    waitFor ctxListen.disconnect()
 
   test "stay subscribed after long disconnect with reconnect":
     ## This test currently needs manual actions - you need to close/disconnect
@@ -454,7 +669,8 @@ suite "test suite for subscribe":
 
       var msgCount: int
       proc onDataSubKeepLong(topic: string, message: string) =
-        msgCount += 1
+        if topic == tpc and message == msg:
+          msgCount += 1
 
       await ctxSlave.subscribe(tpc, 0, onDataSubKeepLong)
       await sleepAsync(500)
@@ -509,3 +725,5 @@ suite "test suite for subscribe":
                           "rx> Unsuback(00):"]))
 
     waitFor conn()
+    waitFor ctxMain.disconnect()
+    waitFor ctxSlave.disconnect()
