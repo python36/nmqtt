@@ -2,12 +2,13 @@
 ##
 ## zevv (https://github.com/zevv) & ThomasTJdev (https://github.com/ThomasTJdev) & python36 (https://github.com/python36)
 
-import
-  strutils,
-  asyncnet,
-  net,
-  asyncDispatch,
-  tables
+import std/[strutils,
+            asyncnet,
+            net,
+            asyncdispatch,
+            tables,
+            monotimes,
+            times]
 
 when defined(broker):
   import
@@ -49,6 +50,11 @@ type
     inWork: bool
     hasNewWorks: bool
     keepAlive: uint16
+    pingRunned: bool
+    lastSend: MonoTime
+    awaitingPingResp: bool
+    timeoutPingRespTime: MonoTime
+    pingRespTimeout: Duration
     maxInflightMessages: int
     willFlag: bool
     willQoS: QoS
@@ -423,13 +429,15 @@ proc send(ctx: MqttCtx, pkt: Pkt): Future[bool] {.async.} =
     let hdrlen = buf.len
     buf.setLen(hdrlen + pkt.data.len)
     copyMem(buf[hdrlen].addr, pkt.data[0].unsafeAddr, pkt.data.len)
+
+  ctx.lastSend = getMonoTime()
   await ctx.s.send(buf[0].unsafeAddr, buf.len)
 
   return true
 
 proc recv(ctx: MqttCtx): Future[Pkt] {.async.} =
   ## Receive and parse the packet
-  if ctx.state notin {Connecting,Connected}:
+  if ctx.state notin {Connecting, Connected}:
     return
 
   var r: int
@@ -511,7 +519,7 @@ proc sendConnect(ctx: MqttCtx): Future[bool] =
   pkt.put("MQTT", true)
   pkt.put(4.uint8)
   pkt.put(flags)
-  pkt.put(ctx.keepAlive.uint16)
+  pkt.put(ctx.keepAlive)
   pkt.put(ctx.clientId, true)
 
   if ctx.willFlag:
@@ -523,7 +531,6 @@ proc sendConnect(ctx: MqttCtx): Future[bool] =
     pkt.put(ctx.username, true)
   if ctx.password != "":
     pkt.put(ctx.password, true)
-  ctx.state = Connecting
   result = ctx.send(pkt)
 
 proc sendDisconnect(ctx: MqttCtx): Future[bool] =
@@ -1069,7 +1076,7 @@ proc onPingReq(ctx: MqttCtx, pkt: Pkt) {.async.} =
     await ctx.work()
 
 proc onPingResp(ctx: MqttCtx, pkt: Pkt) {.async.} =
-  discard
+  ctx.awaitingPingResp = false
 
 proc handle(ctx: MqttCtx, pkt: Pkt) {.async.} =
   when defined(broker):
@@ -1109,12 +1116,29 @@ proc runRx(ctx: MqttCtx) {.async.} =
       ctx.wrn("Boom, socket is closed")
 
 proc runPing(ctx: MqttCtx) {.async.} =
+  if ctx.pingRunned:
+    return
+  ctx.pingRunned = true
   while true:
-    await sleepAsync(ctx.keepAlive.int * 1000)
-    let ok = await ctx.sendPingReq()
-    if not ok:
+    await sleepAsync(1000)
+
+    if ctx.state notin {Connecting, Connected, Disconnecting}:
       break
-    await ctx.work()
+    if ctx.state != Connected:
+      continue
+
+    let now = getMonoTime()
+    if ctx.awaitingPingResp:
+      if now >= ctx.timeoutPingRespTime:
+        await ctx.close("ping response timeout")
+        break
+
+    elif (now - ctx.lastSend).inSeconds >= int64(ctx.keepAlive):
+      discard await ctx.sendPingReq()
+      ctx.timeoutPingRespTime = now + ctx.pingRespTimeout
+      ctx.awaitingPingResp = true
+
+  ctx.pingRunned = false
 
 proc connectBroker(ctx: MqttCtx) {.async.} =
   ## Connect to the broker.
@@ -1124,16 +1148,21 @@ proc connectBroker(ctx: MqttCtx) {.async.} =
   if ctx.verbosity >= 1:
     ctx.dbg("Connecting to " & ctx.host & ":" & $ctx.port)
 
-  ctx.state = Error # set to Connecting by sendConnect
+  ctx.state = Connecting
 
-  ctx.s = await asyncnet.dial(ctx.host, ctx.port)
-  if ctx.sslOn:
-    when defined(ssl):
-      ctx.ssl = newContext(protSSLv23, CVerifyNone, ctx.sslCert, ctx.sslKey)
-      wrapConnectedSocket(ctx.ssl, ctx.s, handshakeAsClient)
-    else:
-      ctx.wrn("Requested SSL session but ssl is not enabled")
-      await ctx.close("SSL not enabled")
+  try:
+    ctx.s = await asyncnet.dial(ctx.host, ctx.port)
+    if ctx.sslOn:
+      when defined(ssl):
+        ctx.ssl = newContext(protSSLv23, CVerifyNone, ctx.sslCert, ctx.sslKey)
+        wrapConnectedSocket(ctx.ssl, ctx.s, handshakeAsClient)
+      else:
+        ctx.wrn("Requested SSL session but ssl is not enabled")
+        await ctx.close("SSL not enabled")
+        raise newException(SslError, "SSL session requested but compiler flag -d:ssl is missing")
+  except CatchableError as e:
+    ctx.state = Error
+    raise
 
   let ok = await ctx.sendConnect()
   if ok:
@@ -1155,7 +1184,6 @@ proc runConnect(ctx: MqttCtx) {.async.} =
           ctx.dbg("Error connecting to " & ctx.host)
         if ctx.verbosity >= 2:
           echo e.msg
-        ctx.state = Error
 
       # If the client has been disconnect, it is necessary to tell the broker,
       # that we still want to be Subscribed. PubCallbacks still holds the
@@ -1177,7 +1205,8 @@ proc runConnect(ctx: MqttCtx) {.async.} =
 
 proc newMqttCtx*(clientId: string): MqttCtx =
   ## Initiate a new MQTT client.
-  MqttCtx(clientId: clientId, state: Disconnected, maxInflightMessages: 20)
+  MqttCtx(clientId: clientId, state: Disconnected, maxInflightMessages: 20,
+          keepAlive: 60, pingRespTimeout: initDuration(seconds = 10))
 
 proc setPingInterval*(ctx: MqttCtx, txInterval: int = 60) =
   ## Set the clients ping interval in seconds. Default is 60 seconds.
