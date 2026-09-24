@@ -1159,7 +1159,7 @@ proc connectBroker(ctx: MqttCtx) {.async.} =
       else:
         ctx.wrn("Requested SSL session but ssl is not enabled")
         await ctx.close("SSL not enabled")
-        raise newException(SslError, "SSL session requested but compiler flag -d:ssl is missing")
+        raise newException(IOError, "SSL session requested but compiler flag -d:ssl is missing")
   except CatchableError as e:
     ctx.state = Error
     raise
