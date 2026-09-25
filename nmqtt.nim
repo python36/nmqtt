@@ -1308,16 +1308,19 @@ proc unsubscribe*(ctx: MqttCtx, topic: string): Future[void] =
   ctx.workQueue[msgId] = Work(wk: SubWork, msgId: msgId, topic: topic, typ: Unsubscribe)
   result = ctx.work()
 
-proc isConnected*(ctx: MqttCtx): bool =
+proc isConnected*(ctx: MqttCtx): bool {.inline.} =
   ## Returns true, if the client is connected to the broker.
-  if ctx.state == Connected:
-    result = true
+  ctx.state == Connected
 
-proc msgQueue*(ctx: MqttCtx): int =
+proc hasError*(ctx: MqttCtx): bool {.inline.} =
+  ## Returns true, if the context is in an error state.
+  ctx.state == Error
+
+proc msgQueue*(ctx: MqttCtx): int {.inline.} =
   ## Returns the number of unfinished packages, which still are in the work queue.
   ## This includes all publish and subscribe packages, which has not been fully
   ## send, acknowledged or completed.
   ##
   ## You can use this to ensure, that all your of messages are sent, before
   ## exiting your program.
-  result = ctx.workQueue.len()
+  ctx.workQueue.len()
