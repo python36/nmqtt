@@ -1,6 +1,21 @@
 
 suite "test suite for connections":
 
+  test "connection error":
+    let (tpc, _) = tdata("connection non-exists broker")
+    proc conn() {.async.} =
+      let ctx = newMqttCtx("nmqttTestConn" & tpc) # unique clientid for public broker
+      ctx.setHost("localhost", 1993)
+      var hasError: bool
+      try:
+        await ctx.connect()
+      except OsError:
+        hasError = true
+      check(ctx.state == Error)
+      check(hasError == true)
+
+    waitFor conn()
+
   test "connection public broker":
     let (tpc, msg) = tdata("connection public broker")
 
