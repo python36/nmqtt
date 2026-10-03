@@ -49,7 +49,9 @@ type
     pubCallbacks: Table[string, TopicCb]
     inWork: bool
     hasNewWorks: bool
-    keepAlive: uint16
+    keepAlive: Duration
+    keepAliveTimeout: Duration
+    keepAliveMonitorRunned: bool
     pingRunned: bool
     lastSend: MonoTime
     awaitingPingResp: bool
@@ -67,7 +69,7 @@ type
     version: uint8
     connFlags: string
     subscribed: Table[string, QoS] # Topic, QoS
-    lastAction: float # Check keepAlive
+    lastAction: MonoTime # Check keepAlive
 
   #when defined(broker):
   ConnAckFlag = enum
@@ -324,7 +326,7 @@ proc splitTopic(topic: string): seq[string] =
 
 when defined(broker):
   proc retainMsg(topic: string, message: string, qos: QoS, clientid: string) =
-    mqttbroker.retained[topic] = RetainedMsg(msg: message, qos: qos, time: epochTime(), clientid: clientid)
+    mqttbroker.retained[topic] = RetainedMsg(msg: message, qos: qos, clientid: clientid)
 
 when defined(broker):
   proc addSubscriber*(ctx: MqttCtx, topic: string) {.async.} =
@@ -519,7 +521,7 @@ proc sendConnect(ctx: MqttCtx): Future[bool] =
   pkt.put("MQTT", true)
   pkt.put(4.uint8)
   pkt.put(flags)
-  pkt.put(ctx.keepAlive)
+  pkt.put(uint16(ctx.keepAlive.inSeconds))
   pkt.put(ctx.clientId, true)
 
   if ctx.willFlag:
@@ -715,14 +717,19 @@ proc work(ctx: MqttCtx) {.async.} =
 when defined(broker):
   proc sendWill(ctx: MqttCtx) {.async.} =
     ## Send the will
-    if ctx.willTopic != "":
-      if ctx.willRetain:
-        retainMsg(ctx.willTopic, ctx.willMsg, ctx.willQoS, ctx.clientid)
-      for c in mqttbroker.subscribers[ctx.willTopic].ctxs:
-        let msgId = c.nextMsgId()
-        let qos = qosAlign(ctx.willQoS, c.subscribed[ctx.willTopic])
-        c.workQueue[msgId] = Work(wk: PubWork, msgId: msgId, topic: ctx.willTopic, qos: qos, retain: ctx.willRetain, message: ctx.willMsg, typ: Publish)
-        await c.work()
+    if not ctx.willFlag:
+      return
+    if ctx.willRetain:
+      retainMsg(ctx.willTopic, ctx.willMsg, ctx.willQoS, ctx.clientid)
+
+    if not mqttbroker.subscribers.hasKey(ctx.willTopic):
+      return
+    for c in mqttbroker.subscribers[ctx.willTopic].ctxs:
+      let msgId = c.nextMsgId()
+      let qos = qosAlign(ctx.willQoS, c.subscribed[ctx.willTopic])
+      c.workQueue[msgId] = Work(wk: PubWork, msgId: msgId, topic: ctx.willTopic, qos: qos,
+                                retain: ctx.willRetain, message: ctx.willMsg, typ: Publish)
+      await c.work()
 
 when defined(broker):
   proc publishToSubscribers(seqctx: seq[MqttCtx], pkt: Pkt, matchedTopic, topic, message: string, qos: QoS, retain: bool, senderId: string) {.async.} =
@@ -756,19 +763,24 @@ proc onConnect(ctx: MqttCtx, pkt: Pkt) {.async.} =
     var
       offset: int
       nextLen: uint16
+      keepAlive: uint16
 
     # Main data
     (ctx.proto, offset)     = pkt.getstring(0, true)
     (ctx.version, offset)   = pkt.getu8(offset)
     (ctx.connFlags, offset) = getbin(pkt, offset)
-    (ctx.keepAlive, offset) = pkt.getu16(offset)
+    (keepAlive, offset)     = pkt.getu16(offset)
+    ctx.keepAlive           = initDuration(seconds = int64(keepAlive))
+    ctx.keepAliveTimeout    = initDuration(milliseconds = int64(float(ctx.keepAlive.inMilliseconds) * 1.5))
     (nextLen, offset)       = pkt.getu16(offset)
     (ctx.clientId, offset)  = pkt.getstring(offset, parseInt($nextLen))
     if not mqttbroker.spacesInClientId:
       ctx.clientid = ctx.clientid.replace(" ", "")
 
     # Will Topic
-    if ctx.connFlags[5] == '1':
+    ctx.willFlag = ctx.connFlags[5] == '1'
+    if ctx.willFlag:
+      ctx.willFlag = true
       (nextLen, offset)         = pkt.getu16(offset)
       (ctx.willTopic, offset)   = pkt.getstring(offset,  parseInt($nextLen))
       (nextLen, offset)         = pkt.getu16(offset)
@@ -1058,8 +1070,6 @@ proc onDisconnect(ctx: MqttCtx, pkt: Pkt) {.async.} =
   when not defined(broker):
     ctx.wrn("Packet type only supported for broker: " & $pkt.typ)
   else:
-    #await removeSubscriber(ctx)
-    #await sendWill(ctx)
     ctx.state = Disconnected
     if mqttbroker.verbosity >= 1:
       verbose("Connections >> " & ctx.clientid & " has disconnected")
@@ -1080,7 +1090,7 @@ proc onPingResp(ctx: MqttCtx, pkt: Pkt) {.async.} =
 
 proc handle(ctx: MqttCtx, pkt: Pkt) {.async.} =
   when defined(broker):
-    ctx.lastAction = epochTime()
+    ctx.lastAction = getMonoTime()
 
   case pkt.typ
     of ConnAck: await ctx.onConnAck(pkt)
@@ -1120,11 +1130,10 @@ proc runPing(ctx: MqttCtx) {.async.} =
     return
   ctx.pingRunned = true
   while true:
-    await sleepAsync(1000)
-
     if ctx.state notin {Connecting, Connected, Disconnecting}:
       break
     if ctx.state != Connected:
+      await sleepAsync(500)
       continue
 
     let now = getMonoTime()
@@ -1132,18 +1141,27 @@ proc runPing(ctx: MqttCtx) {.async.} =
       if now >= ctx.timeoutPingRespTime:
         await ctx.close("ping response timeout")
         break
+      await sleepAsync(500)
 
-    elif (now - ctx.lastSend).inSeconds >= int64(ctx.keepAlive):
-      discard await ctx.sendPingReq()
-      ctx.timeoutPingRespTime = now + ctx.pingRespTimeout
-      ctx.awaitingPingResp = true
+    else:
+      let ms = (ctx.keepAlive - (now - ctx.lastSend)).inMilliseconds
+      if ms < 0:
+        discard await ctx.sendPingReq()
+        ctx.timeoutPingRespTime = now + ctx.pingRespTimeout
+        ctx.awaitingPingResp = true
+
+      elif ms < 1000:
+        await sleepAsync(int(ms))
+
+      else:
+        await sleepAsync(1000)
 
   ctx.pingRunned = false
 
 proc connectBroker(ctx: MqttCtx) {.async.} =
   ## Connect to the broker.
-  if ctx.keepAlive == 0:
-    ctx.keepAlive = 60
+  if ctx.keepAlive == DurationZero:
+    ctx.keepAlive = initDuration(seconds = 60)
 
   if ctx.verbosity >= 1:
     ctx.dbg("Connecting to " & ctx.host & ":" & $ctx.port)
@@ -1206,12 +1224,12 @@ proc runConnect(ctx: MqttCtx) {.async.} =
 proc newMqttCtx*(clientId: string): MqttCtx =
   ## Initiate a new MQTT client.
   MqttCtx(clientId: clientId, state: Disconnected, maxInflightMessages: 20,
-          keepAlive: 60, pingRespTimeout: initDuration(seconds = 10))
+          keepAlive: initDuration(seconds = 60), pingRespTimeout: initDuration(seconds = 10))
 
 proc setPingInterval*(ctx: MqttCtx, txInterval: int = 60) =
   ## Set the clients ping interval in seconds. Default is 60 seconds.
   if txInterval > 0 and txInterval < 65535:
-    ctx.keepAlive = txInterval.uint16
+    ctx.keepAlive = initDuration(seconds = int64(txInterval))
 
 proc setHost*(ctx: MqttCtx, host: string, port: int = 1883, sslOn = false) =
   ## Set the MQTT host.

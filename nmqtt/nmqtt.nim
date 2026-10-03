@@ -13,18 +13,21 @@
 include "../nmqtt.nim"
 
 proc keepAliveMonitor(ctx: MqttCtx) {.async.} =
-  ctx.lastAction = epochTime()
   # The keep alive time is one and a half times the Keep Alive periode [MQTT-3.1.2-24]
-  let keepAlive = toFloat(ctx.keepAlive.int) * 1.5 * 1000
-  while ctx.state in [Connecting, Connected]:
-    let saveLastAction = ctx.lastAction
-    await sleepAsync(keepAlive)
-    if ctx.lastAction <= saveLastAction:
+  if ctx.keepAliveMonitorRunned:
+    return
+  ctx.keepAliveMonitorRunned = true
+  while true:
+    await sleepAsync(1000)
+    if ctx.state notin {Connecting, Connected}:
+      break
+    if getMonoTime() - ctx.lastAction > ctx.keepAliveTimeout:
       ctx.state = Error
       ctx.s.close()
       if mqttbroker.verbosity >= 1:
         verbose("Connections >> " & ctx.clientid & " was disconnected. Keep alive time overdue.")
       break
+  ctx.keepAliveMonitorRunned = false
 
 proc processClient(s: AsyncSocket) {.async.} =
   ## Create new client
