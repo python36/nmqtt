@@ -64,3 +64,27 @@ suite "test suite for ping":
       check(pingResp == 0)
 
     waitFor conn()
+
+  test "keepalive timeout":
+    let
+      ctxMain = newCtx()
+
+    proc conn() {.async.} =
+      await sleepAsync(500)
+      await ctxMain.disconnect()
+      await sleepAsync(500)
+
+      ctxMain.setPingInterval(1)
+      await ctxMain.connect()
+
+      await sleepAsync(500)
+      ctxMain.setPingInterval(30)
+
+      var disconnected = not ctxMain.isConnected()
+      for i in 1 .. 15:
+        await sleepAsync(1000)
+        if not ctxMain.isConnected():
+          break
+      check(ctxMain.isConnected() == false)
+
+    waitFor conn()
