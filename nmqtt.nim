@@ -1311,13 +1311,27 @@ proc publish*(ctx: MqttCtx, topic: string, message: string, qos: QoS = 0, retain
 proc subscribe*(ctx: MqttCtx, topic: string, qos: QoS | int, callback: PubCallback.cb): Future[void] =
   ## Subscribe to a topic.
   ##
+  ## Shared subscription topic filter must follow the format: $share/{ShareName}/{filter}
+  ## 
   ## Access the callback with:
   ## .. code-block::nim
   ##    proc callbackName(topic: string, message: string) =
   ##      echo "Topic: ", topic, ": ", message
   let msgId = ctx.nextMsgId()
   ctx.workQueue[msgId] = Work(wk: SubWork, msgId: msgId, topic: topic, qos: QoS(qos), typ: Subscribe)
-  ctx.pubCallbacks[topic] = (templ: splitTopic(topic), cb: PubCallback(cb: callback, qos: QoS(qos)))
+  let topicCb = if topic.startswith("$share"):
+    let topicItems = topic.split('/', 3)
+    if topicItems.len < 3:
+      raise newException(ValueError, "Invalid shared topic. Expected '$share/{ShareName}/{filter}', but got fewer than 3 segments.")
+    elif topicItems[1].len == 0 or topicItems[2].len == 0:
+      raise newException(ValueError, "Invalid shared topic. 'ShareName' and 'filter' segments cannot be empty.")
+    elif {'+', '#'} in topicItems[1]: 
+      raise newException(ValueError, "Invalid shared topic. The shared subscription group name must not contain MQTT wildcards ('+' or '#').") 
+    topicItems[2]
+  else:
+    topic
+
+  ctx.pubCallbacks[topic] = (templ: splitTopic(topicCb), cb: PubCallback(cb: callback, qos: QoS(qos)))
   result = ctx.work()
 
 proc unsubscribe*(ctx: MqttCtx, topic: string): Future[void] =
