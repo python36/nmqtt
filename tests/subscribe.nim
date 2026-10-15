@@ -727,3 +727,55 @@ suite "test suite for subscribe":
     waitFor conn()
     waitFor ctxMain.disconnect()
     waitFor ctxSlave.disconnect()
+
+  test "shared subscribe":
+    # Need MQTT broker with support 5.0 protocol. nmqtt broker does not support it yet.
+
+    let
+      ctxMain = newCtx()
+      ctxSlave1 = newCtx()
+      ctxSlave2 = newCtx()
+      (tpc, msg) = tdata("shared subscribtion")
+
+    proc conn() {.async.} =
+      var
+        msgCount1: int
+        msgCount2: int
+
+      proc onData1(topic: string, message: string) =
+        check(topic == tpc)
+        check(message == msg)
+        msgCount1 += 1
+
+      proc onData2(topic: string, message: string) =
+        check(topic == tpc)
+        check(message == msg)
+        msgCount2 += 1
+
+      await ctxSlave1.subscribe("$share/ShareName" & tpc & "/" & tpc, 0, onData1)
+      await ctxSlave2.subscribe("$share/ShareName" & tpc & "/" & tpc, 0, onData2)
+      await sleepAsync(500)
+      await ctxMain.publish(tpc, msg, 0)
+      await ctxMain.publish(tpc, msg, 0)
+      await sleepAsync(500)
+
+      check(msgCount1 == 1)
+      check(msgCount2 == 1)
+
+      expect ValueError:
+        await ctxSlave1.subscribe("$share/ShareName/", 0, onData2)
+      expect ValueError:
+        await ctxSlave1.subscribe("$share//filter", 0, onData2)
+      expect ValueError:
+        await ctxSlave1.subscribe("$share/+/wildcard", 0, onData2)
+      expect ValueError:
+        await ctxSlave1.subscribe("$share/#/wildcard", 0, onData2)
+      expect ValueError:
+        await ctxSlave1.subscribe("$share/#", 0, onData2)
+      expect ValueError:
+        await ctxSlave1.subscribe("$share", 0, onData2)
+
+    waitFor conn()
+    waitFor ctxMain.disconnect()
+    waitFor ctxSlave1.disconnect()
+    waitFor ctxSlave2.disconnect()
